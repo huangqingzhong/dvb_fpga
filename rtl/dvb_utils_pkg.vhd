@@ -55,6 +55,12 @@ package dvb_utils_pkg is
     constant frame_length : in  frame_type_t;
     constant code_rate    : in  code_rate_t) return positive;
 
+  -- Enum like type for LDPC codes
+  type ldpc_code_type is (
+    not_set, -- Only for sim, to allow setting an invalid value
+    ldpc_1_4, ldpc_1_3, ldpc_2_5, ldpc_1_2, ldpc_3_5, ldpc_2_3, ldpc_3_4, ldpc_4_5,
+    ldpc_5_6, ldpc_8_9, ldpc_9_10);
+
 end dvb_utils_pkg;
 
 package body dvb_utils_pkg is
