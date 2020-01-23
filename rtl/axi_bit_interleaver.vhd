@@ -63,13 +63,14 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   ---------------
   -- Constants --
   ---------------
-  constant MAX_ROWS    : integer := 21_600 / DATA_WIDTH;
-  constant MAX_COLUMNS : integer := 5;
+  constant RAM_PTR_WIDTH : integer := 1;
+  constant MAX_ROWS      : integer := 21_600 / DATA_WIDTH;
+  constant MAX_COLUMNS   : integer := 5;
 
   type cfg_t is record
-    rows      : unsigned(numbits(MAX_ROWS) - 1 downto 0);
-    columns   : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
-    remainder : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
+    last_row    : unsigned(numbits(MAX_ROWS) - 1 downto 0);
+    last_column : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
+    remainder   : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
   end record;
 
   impure function get_cnt_max_values (
@@ -113,14 +114,14 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
              " is not supported yet with DATA_WIDTH " & integer'image(DATA_WIDTH)
       severity warning;
 
-    -- return (rows      => to_unsigned((rows + DATA_WIDTH - 1 ) / DATA_WIDTH, numbits(MAX_ROWS)) - 1,
-    return (rows      => to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 1,
-            columns   => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,
-            remainder => to_unsigned(rows mod DATA_WIDTH, numbits(DATA_WIDTH)));
+    return (last_row    => to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 1,
+            last_column => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,
+            remainder   => to_unsigned(rows mod DATA_WIDTH, numbits(DATA_WIDTH)));
 
   end function get_cnt_max_values;
 
-  type addr_array_t is array (natural range <>) of unsigned(numbits(MAX_ROWS) downto 0);
+  type addr_array_t is array (natural range <>)
+    of unsigned(numbits(MAX_ROWS) + RAM_PTR_WIDTH - 1 downto 0);
   type data_array_t is array (natural range <>) of std_logic_vector(DATA_WIDTH - 1 downto 0);
 
   -------------
@@ -131,18 +132,24 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal s_tready_i           : std_logic;
   signal s_tlast_reg          : std_logic;
 
+  -- RAM base pointers to handle back to back frames by writing and reading from different
+  -- regions of the RAM. This will introduce 1 frame of latency though
+  signal ram_ptr_diff         : unsigned(RAM_PTR_WIDTH - 1 downto 0);
+  signal wr_ram_ptr           : unsigned(RAM_PTR_WIDTH - 1 downto 0);
+  signal rd_ram_ptr           : unsigned(RAM_PTR_WIDTH - 1 downto 0);
+
   -- Write side config
   signal cfg_wr_constellation : constellation_t;
   signal cfg_wr_frame_type    : frame_type_t;
   signal cfg_wr_code_rate     : code_rate_t;
   signal cfg_wr_cnt           : cfg_t;
-  signal wr_ram_ptr           : unsigned(0 downto 0);
   -- Write side counters
   signal wr_row_cnt           : unsigned(numbits(MAX_ROWS) - 1 downto 0);
   signal wr_column_cnt        : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
   signal wr_column_cnt_prev   : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
   signal wr_remainder         : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
-  signal wr_late              : std_logic;
+  signal wr_partial           : std_logic;
+  signal wr_partial_start     : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
   
   signal s_tdata_reg          : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal wr_data_shifted      : std_logic_vector(DATA_WIDTH - 1 downto 0);
@@ -152,8 +159,6 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal ram_wr_addr          : addr_array_t(MAX_COLUMNS - 1 downto 0);
   signal ram_wr_data          : data_array_t(MAX_COLUMNS - 1 downto 0);
   signal ram_wr_en            : std_logic_vector(MAX_COLUMNS - 1 downto 0);
-
-  signal rd_ram_ptr           : unsigned(0 downto 0);
 
   -- Read side config
   signal cfg_rd_constellation : constellation_t;
@@ -167,7 +172,7 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal rd_column_cnt_prev   : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
 
   -- RAM read interface
-  signal ram_rd_addr          : unsigned(numbits(MAX_ROWS) downto 0);
+  signal ram_rd_addr          : unsigned(numbits(MAX_ROWS) + RAM_PTR_WIDTH - 1 downto 0);
   signal ram_rd_data          : data_array_t(0 to MAX_COLUMNS - 1);
 
   signal rd_data_sr           : std_logic_vector(MAX_COLUMNS*DATA_WIDTH - 1 downto 0);
@@ -193,28 +198,39 @@ begin
   -- Port mappings --
   -------------------
   -- Generate 1 RAM for each column, each one gets written sequentially
-  generate_rams : for column in 0 to MAX_COLUMNS - 1 generate
-    ram : entity work.ram_inference
-      generic map (
-        ADDR_WIDTH          => numbits(MAX_ROWS) + 1,
-        DATA_WIDTH          => DATA_WIDTH,
-        RAM_INFERENCE_STYLE => "auto",
-        EXTRA_OUTPUT_DELAY  => 0)
-      port map (
-        -- Port A
-        clk_a     => clk,
-        clken_a   => '1',
-        wren_a    => ram_wr_en(column),
-        addr_a    => std_logic_vector(ram_wr_addr(column)),
-        wrdata_a  => ram_wr_data(column),
-        rddata_a  => open,
+  block_ram : block
+    -- Wiring directly was causing bound errors on GHDL
+    signal addr_b : std_logic_vector(numbits(MAX_ROWS) downto 0);
+  begin
 
-        -- Port B
-        clk_b     => clk,
-        clken_b   => '1',
-        addr_b    => std_logic_vector(ram_rd_addr),
-        rddata_b  => ram_rd_data(column));
-  end generate generate_rams;
+    generate_rams : for column in 0 to MAX_COLUMNS - 1 generate
+      signal addr_a : std_logic_vector(numbits(MAX_ROWS) downto 0);
+    begin
+      addr_a <= std_logic_vector(ram_wr_addr(column)(numbits(MAX_ROWS) downto 0));
+      addr_b <= std_logic_vector(ram_rd_addr(numbits(MAX_ROWS) downto 0));
+
+      ram : entity work.ram_inference
+        generic map (
+          ADDR_WIDTH          => numbits(MAX_ROWS) + 1,
+          DATA_WIDTH          => DATA_WIDTH,
+          RAM_INFERENCE_STYLE => "auto",
+          EXTRA_OUTPUT_DELAY  => 0)
+        port map (
+          -- Port A
+          clk_a     => clk,
+          clken_a   => '1',
+          wren_a    => ram_wr_en(column),
+          addr_a    => addr_a,
+          wrdata_a  => ram_wr_data(column),
+          rddata_a  => open,
+
+          -- Port B
+          clk_b     => clk,
+          clken_b   => '1',
+          addr_b    => addr_b,
+          rddata_b  => ram_rd_data(column));
+    end generate generate_rams;
+  end block;
 
   -- Interleaved data takes 1 cycle after the address has changed, add support for
   -- a couple of cycles to stop the pipeline
@@ -261,7 +277,11 @@ begin
   end generate iter_rows;
 
   s_axi_dv        <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
-  s_tready_i      <= m_tready when wr_ram_ptr - rd_ram_ptr < 1 else '0';
+
+  ram_ptr_diff    <= wr_ram_ptr - rd_ram_ptr when wr_ram_ptr > rd_ram_ptr else
+                     2**RAM_PTR_WIDTH + wr_ram_ptr - rd_ram_ptr;
+
+  s_tready_i      <= m_tready when ram_ptr_diff < 2**RAM_PTR_WIDTH else '0';
 
   -- Assign internals
   s_tready        <= s_tready_i;
@@ -270,12 +290,11 @@ begin
                      s_tdata_reg(DATA_WIDTH - to_integer(wr_remainder) - 1 downto 0) &
                      s_tdata(DATA_WIDTH - 1 downto DATA_WIDTH - to_integer(wr_remainder));
 
+  -- TODO: Remove this
   g_dbg : for i in 0 to DATA_WIDTH - 1 generate
     dbg_data_shifted(i) <= s_tdata_reg(DATA_WIDTH - i - 1 downto 0) &
                            s_tdata(DATA_WIDTH - 1 downto DATA_WIDTH - i);
   end generate;
-
-  -- wr_data_shifted <= dbg_data_shifted((to_integer(wr_remainder) + 6) mod DATA_WIDTH);
 
   --------------------------------
   -- Handle write side pointers --
@@ -284,15 +303,12 @@ begin
     variable wr_column_cnt_i : natural range 0 to MAX_COLUMNS - 1;
   begin
     if rst = '1' then
-      cfg_wr_cnt    <= (others => (others => '1'));
-
       wr_column_cnt <= (others => '0');
       wr_row_cnt    <= (others => '0');
       wr_remainder  <= (others => '0');
       wr_ram_ptr    <= (others => '0');
 
       first_word    <= '1';
-      wr_late       <= '0';
 
       ram_wr_addr   <= (others => (others => '0'));
 
@@ -302,11 +318,13 @@ begin
 
       s_axi_dv_reg       <= s_axi_dv;
       s_tlast_reg        <= s_tlast;
-      wr_late            <= '0';
       wr_column_cnt_prev <= wr_column_cnt;
 
+      wr_partial         <= '0';
+      wr_partial_start   <= wr_remainder;
+
       ram_wr_en                    <= (others => '0');
-      ram_wr_data(wr_column_cnt_i) <= wr_data_shifted; --s_tdata;
+      ram_wr_data(wr_column_cnt_i) <= wr_data_shifted;
 
       -- Increment RAM addr every time it gets written
       for column in 0 to MAX_COLUMNS - 1 loop
@@ -314,14 +332,15 @@ begin
           ram_wr_addr(column) <= ram_wr_addr(column) + 1;
         end if;
       end loop;
-      
+
+      s_tdata_reg <= s_tdata;
+
+      -- Data handling will use the delayed AXI data -- can register config safely
       if s_axi_dv = '1' then
         first_word  <= s_tlast;
-        s_tdata_reg <= s_tdata;
 
         if first_word = '1' then
           cfg_wr_cnt           <= get_cnt_max_values(cfg_constellation, cfg_frame_type);
-          -- wr_remainder <= to_unsigned(2, wr_remainder'length);
           cfg_wr_constellation <= cfg_constellation;
           cfg_wr_frame_type    <= cfg_frame_type;
           cfg_wr_code_rate     <= cfg_code_rate;
@@ -329,48 +348,71 @@ begin
 
         if s_tlast = '1' then
           wr_ram_ptr <= wr_ram_ptr + 1;
-            -- -- Need to cast the result to unsigned for GHDL
-            -- ram_wr_addr <= (others => unsigned'(wr_ram_ptr & (numbits(MAX_ROWS) - 1 downto 0 => '0')));
         end if;
 
-      end if;
-
-      if wr_late = '1' then
-        ram_wr_en(to_integer(wr_column_cnt_prev))   <= '1';
-        ram_wr_data(to_integer(wr_column_cnt_prev)) <= s_tdata_reg;
       end if;
 
       -- Handle incoming AXI data
-      if s_axi_dv_reg = '1' then
-        -- first_word  <= s_tlast;
+      handle_axi_dv_reg : if s_axi_dv_reg = '1' then
 
         ram_wr_en(wr_column_cnt_i)   <= '1';
 
-        if wr_row_cnt /= cfg_wr_cnt.rows then
-          wr_row_cnt <= wr_row_cnt + 1;
-        else
-          wr_row_cnt <= (others => '0');
-          wr_remainder <= wr_remainder + cfg_wr_cnt.remainder;
-
-          if cfg_wr_cnt.remainder /= 0 then
-            if wr_remainder - (cfg_wr_cnt.remainder & '0') = 0 then
-              wr_row_cnt <= (wr_row_cnt'range => '0') - 1; -- cfg_wr_cnt.remainder;
-            elsif wr_remainder + cfg_wr_cnt.remainder /= 0 then
-              wr_late    <= '1';
-            end if;
-          end if;
-
-          if wr_column_cnt /= cfg_wr_cnt.columns then
-            wr_column_cnt <= wr_column_cnt + 1;
-          else
-            wr_column_cnt <= (others => '0');
-            -- wr_ram_ptr    <= wr_ram_ptr + 1;
-
-          end if;
-
+        -- First word; set the RAM's write addresses using the write pointer
+        if wr_row_cnt = 0 and wr_column_cnt = 0 then
+          ram_wr_addr <= (others => unsigned'(wr_ram_ptr & (numbits(MAX_ROWS) - 1 downto 0 => '0')));
         end if;
 
+        wr_row : if wr_row_cnt /= cfg_wr_cnt.last_row then
+          wr_row_cnt <= wr_row_cnt + 1;
+        else
+          wr_row_cnt   <= (others => '0');
+          wr_remainder <= wr_remainder + cfg_wr_cnt.remainder;
+
+          -- When the number of rows is not an integer multiple of DATA_WIDTH, we'll need
+          -- track how many bits we have accumulated to extend the column by a full byte.
+          -- Partial values will be written via wr_partial
+          if cfg_wr_cnt.remainder /= 0 then
+            -- The very first column will yield some extra bits (the amount is given by
+            -- cfg_wr_cnt.remainder) and we need to know whenever the *next* column will
+            -- have a full extra word -- hence the 2 * cfg_wr_cnt.remainder here
+            if wr_remainder - (cfg_wr_cnt.remainder & '0') = 0 then
+              wr_row_cnt <= (wr_row_cnt'range => '0') - 1;
+            end if;
+
+          end if;
+
+          -- Chain counters
+          if wr_column_cnt /= cfg_wr_cnt.last_column then
+            wr_column_cnt <= wr_column_cnt + 1;
+            wr_partial    <= '1';
+          else
+            if cfg_wr_cnt.remainder /= 0 then
+              ram_wr_data(to_integer(wr_column_cnt_prev)) <= s_tdata_reg(1 downto 0) & (5 downto 0 => '0');
+            end if;
+
+            wr_column_cnt <= (others => '0');
+          end if;
+
+        end if wr_row;
+
+      end if handle_axi_dv_reg;
+
+      -- Handle writing partial word
+      if wr_partial = '1' then
+        ram_wr_en(to_integer(wr_column_cnt_prev))   <= '1';
+
+        -- TODO: Fix this properly
+        if wr_partial_start = 0 then
+          ram_wr_data(to_integer(wr_column_cnt_prev)) <= s_tdata_reg(7 downto 6) & (5 downto 0 => '0');
+        elsif wr_partial_start = 2 then
+          ram_wr_data(to_integer(wr_column_cnt_prev)) <= s_tdata_reg(5 downto 4) & (5 downto 0 => '0');
+        elsif wr_partial_start = 4 then
+          ram_wr_data(to_integer(wr_column_cnt_prev)) <= s_tdata_reg(3 downto 2) & (5 downto 0 => '0');
+        elsif wr_partial_start = 6 then
+          ram_wr_data(to_integer(wr_column_cnt_prev)) <= s_tdata_reg(1 downto 0) & (5 downto 0 => '0');
+        end if;
       end if;
+
 
     end if;
   end process write_side_p;
@@ -384,6 +426,9 @@ begin
       rd_row_cnt      <= (others => '0');
       rd_column_cnt   <= (others => '0');
       rd_ram_ptr      <= (others => '0');
+
+      ram_rd_addr     <= (others => '0');
+
     elsif clk'event and clk = '1' then
 
       if s_axi_dv = '1' and s_tlast = '1' then
@@ -393,8 +438,6 @@ begin
         cfg_rd_constellation <= cfg_wr_constellation;
         cfg_rd_frame_type    <= cfg_wr_frame_type;
         cfg_rd_code_rate     <= cfg_wr_code_rate;
-
-        ram_rd_addr <= rd_ram_ptr & (numbits(MAX_ROWS) - 1 downto 0 => '0');
 
       end if;
 
@@ -413,18 +456,27 @@ begin
         m_wr_en <= '1';
 
         -- Read pointers control logic
-        if rd_column_cnt /= cfg_rd_cnt.columns then
+        if rd_column_cnt /= cfg_rd_cnt.last_column then
           rd_column_cnt <= rd_column_cnt + 1;
         else
           rd_column_cnt <= (others => '0');
 
-          if rd_row_cnt /= cfg_rd_cnt.rows then
+          -- TODO: When remainder /= 0, the last column is always going to be 0??
+          if (rd_row_cnt = cfg_rd_cnt.last_row and cfg_rd_cnt.remainder /= 0) then
+            cfg_rd_cnt.last_column <= (others => '0');
+          end if;
+
+          -- FIXME: Change cfg_rd_cnt.last_row on the fly instead of doing this
+          if (rd_row_cnt /= cfg_rd_cnt.last_row and cfg_rd_cnt.remainder = 0)
+          or (rd_row_cnt /= cfg_rd_cnt.last_row + 1 and cfg_rd_cnt.remainder /= 0) then
+
             rd_row_cnt  <= rd_row_cnt + 1;
             ram_rd_addr <= ram_rd_addr + 1;
           else
             rd_row_cnt  <= (others => '0');
             rd_ram_ptr  <= rd_ram_ptr + 1;
             m_wr_last   <= '1';
+            ram_rd_addr <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
           end if;
         end if;
       end if;

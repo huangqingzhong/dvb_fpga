@@ -43,6 +43,7 @@ use work.file_utils_pkg.all;
 entity axi_bit_interleaver_tb is
   generic (
     runner_cfg : string;
+    DATA_WIDTH : integer := 8;
     test_cfg   : string);
 end axi_bit_interleaver_tb;
 
@@ -53,11 +54,11 @@ architecture axi_bit_interleaver_tb of axi_bit_interleaver_tb is
   ---------------
   constant configs           : config_array_t := get_test_cfg(test_cfg);
 
-  constant FILE_READER_NAME  : string := "file_reader";
-  constant FILE_CHECKER_NAME : string := "file_checker";
-  constant CLK_PERIOD        : time := 5 ns;
-  constant TDATA_WIDTH       : integer := 8;
-  constant ERROR_CNT_WIDTH   : integer := 8;
+  constant FILE_READER_NAME      : string := "file_reader";
+  constant FILE_CHECKER_NAME     : string := "file_checker";
+  constant CLK_PERIOD            : time := 5 ns;
+  constant ERROR_CNT_WIDTH       : integer := 8;
+  constant NUMBER_OF_TEST_FRAMES : integer := 4;
 
   function get_checker_data_ratio ( constant constellation : in constellation_t)
   return string is
@@ -93,18 +94,18 @@ architecture axi_bit_interleaver_tb of axi_bit_interleaver_tb is
   -- AXI input
   signal m_tready           : std_logic;
   signal m_tvalid           : std_logic;
-  signal m_tdata            : std_logic_vector(TDATA_WIDTH - 1 downto 0);
+  signal m_tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal m_tlast            : std_logic;
   signal m_data_valid       : boolean;
 
   -- AXI output
   signal s_tvalid           : std_logic;
-  signal s_tdata            : std_logic_vector(TDATA_WIDTH - 1 downto 0);
+  signal s_tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal s_tlast            : std_logic;
   signal s_tready           : std_logic;
   signal s_data_valid       : boolean;
 
-  signal expected_tdata     : std_logic_vector(TDATA_WIDTH - 1 downto 0);
+  signal expected_tdata     : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal expected_tlast     : std_logic;
   signal tdata_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
   signal tlast_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
@@ -116,7 +117,7 @@ begin
   -- Port mappings --
   -------------------
   dut : entity work.axi_bit_interleaver
-    generic map ( DATA_WIDTH => TDATA_WIDTH )
+    generic map ( DATA_WIDTH => DATA_WIDTH )
     port map (
       -- Usual ports
       clk               => clk,
@@ -143,7 +144,7 @@ begin
   axi_file_reader_u : entity work.axi_file_reader
     generic map (
       READER_NAME => FILE_READER_NAME,
-      DATA_WIDTH  => TDATA_WIDTH)
+      DATA_WIDTH  => DATA_WIDTH)
     port map (
       -- Usual ports
       clk                => clk,
@@ -163,7 +164,7 @@ begin
       READER_NAME     => FILE_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
       REPORT_SEVERITY => Warning,
-      DATA_WIDTH      => TDATA_WIDTH)
+      DATA_WIDTH      => DATA_WIDTH)
     port map (
       -- Usual ports
       clk                => clk,
@@ -278,7 +279,7 @@ begin
         tready_probability <= 1.0;
 
         for i in configs'range loop
-          run_test(configs(i), number_of_frames => 2);
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
 
         wait_for_transfers(configs'length);
@@ -288,16 +289,16 @@ begin
         tready_probability <= 1.0;
 
         for i in configs'range loop
-          run_test(configs(i), number_of_frames => 2);
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
         wait_for_transfers(configs'length);
 
       elsif run("slow_slave") then
-        tvalid_probability <= 0.5;
-        tready_probability <= 1.0;
+        tvalid_probability <= 1.0;
+        tready_probability <= 0.5;
 
         for i in configs'range loop
-          run_test(configs(i), number_of_frames => 2);
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
         wait_for_transfers(configs'length);
 
@@ -306,7 +307,7 @@ begin
         tready_probability <= 0.75;
 
         for i in configs'range loop
-          run_test(configs(i), number_of_frames => 2);
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
         wait_for_transfers(configs'length);
 
