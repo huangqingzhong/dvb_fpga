@@ -384,8 +384,7 @@ begin
       wr_ram_ptr    <= (others => '0');
 
       wr_first_word <= '1';
-
-      ram_wr_addr   <= (others => (others => '0'));
+      wr_addr_init  <= '1';
 
     elsif rising_edge(clk) then
 
@@ -396,8 +395,6 @@ begin
       s_tdata_reg        <= s_tdata;
       wr_column_cnt_reg0 <= wr_column_cnt;
       wr_column_cnt_reg1 <= wr_column_cnt_reg0;
-
-      wr_addr_init       <= '0';
 
       wr_partial         <= '0';
       wr_partial_start   <= wr_remainder;
@@ -428,11 +425,12 @@ begin
       -- Handle incoming AXI data
       handle_axi_dv_reg : if s_axi_dv_reg = '1' then
 
-        ram_wr_en(wr_column_cnt_i)   <= '1';
+        ram_wr_en(wr_column_cnt_i) <= '1';
+        wr_addr_init               <= '0';
 
         -- Initialize each RAM's initial write address at every first row
         if wr_addr_init = '1' then
-          ram_wr_addr(to_integer(wr_column_cnt)) <= wr_ram_ptr & (numbits(MAX_ROWS) - 1 downto 0 => '0');
+          ram_wr_addr(wr_column_cnt_i) <= wr_ram_ptr & (numbits(MAX_ROWS) - 1 downto 0 => '0');
         end if;
 
         wr_row : if wr_row_cnt /= cfg_wr_cnt.last_row then
