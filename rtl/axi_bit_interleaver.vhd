@@ -154,7 +154,6 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal wr_partial_start     : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
   
   signal wr_data_shifted      : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal dbg_data_shifted     : data_array_t(DATA_WIDTH - 1 downto 0);
 
   signal wr_addr_init         : std_logic := '0';
 
@@ -264,11 +263,11 @@ begin
   -- Write and read side mmight be on different timings, use a small FIFO to pass config
   -- across
   cfg_fifo_block : block
+
     signal wr_cfg_wr_en : std_logic;
+
     signal wr_full : std_logic;
     signal wr_data : std_logic_vector(FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH + CODE_RATE_WIDTH - 1 downto 0);
-
-    signal rd_en   : std_logic;
     signal rd_data : std_logic_vector(FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH + CODE_RATE_WIDTH - 1 downto 0);
   begin
 
@@ -302,25 +301,6 @@ begin
         falling => wr_cfg_wr_en,
         toggle  => open);
 
-    -- rd_en_gen: entity work.edge_detector
-    --   generic map (
-    --     SYNCHRONIZE_INPUT => False,
-    --     OUTPUT_DELAY      => 1)
-    --   port map (
-    --     -- Usual ports
-    --     clk     => clk,
-    --     clken   => '1',
-    --     -- 
-    --     din     => rd_first_word,
-    --     -- Edges detected
-    --     rising  => open,
-    --     falling => rd_en,
-    --     toggle  => open);
-
-
-
-    rd_en <= m_wr_last;
-
     -- Not really a FIFO but uses less logic
     cfg_fifo_u : entity work.axi_stream_master_adapter
       generic map (
@@ -337,7 +317,7 @@ begin
         wr_last  => '0',
         -- AXI master
         m_tvalid => open,
-        m_tready => rd_en,
+        m_tready => m_wr_last,
         m_tdata  => rd_data,
         m_tlast  => open);
 
@@ -384,18 +364,12 @@ begin
 
   s_tready_i      <= '1' when ram_ptr_diff < 2 else '0';
 
-  -- Assign internals
-  s_tready        <= s_tready_i;
-
   wr_data_shifted <= s_tdata_reg when wr_remainder = 0 else
                      s_tdata_reg(DATA_WIDTH - to_integer(wr_remainder) - 1 downto 0) &
                      s_tdata(DATA_WIDTH - 1 downto DATA_WIDTH - to_integer(wr_remainder));
 
-  -- TODO: Remove this
-  g_dbg : for i in 0 to DATA_WIDTH - 1 generate
-    dbg_data_shifted(i) <= s_tdata_reg(DATA_WIDTH - i - 1 downto 0) &
-                           s_tdata(DATA_WIDTH - 1 downto DATA_WIDTH - i);
-  end generate;
+  -- Assign internals
+  s_tready        <= s_tready_i;
 
   --------------------------------
   -- Handle write side pointers --
@@ -503,7 +477,7 @@ begin
       if wr_partial = '1' then
         ram_wr_en(to_integer(wr_column_cnt_reg0))   <= '1';
 
-        -- TODO: Fix this properly
+        -- TODO: Write this properly to handle remainder values different than 2
         if wr_partial_start = 0 then
           ram_wr_data(to_integer(wr_column_cnt_reg0)) <= s_tdata_reg(7 downto 6) & (5 downto 0 => '0');
         elsif wr_partial_start = 2 then
@@ -539,12 +513,13 @@ begin
 
       -- if s_axi_dv = '1' and s_tlast = '1' then
       if rd_first_word = '1' then
+        -- TODO: Read side counts bits not words, write this properly
         cfg_rd_cnt_temp := get_cnt_max_values(cfg_wr_constellation, cfg_wr_frame_type);
 
         if cfg_rd_cnt_temp.remainder /= 0 then
-          tmp_rd_rows    <= to_integer((cfg_rd_cnt_temp.last_row + 1) * DATA_WIDTH + cfg_rd_cnt_temp.remainder);
+          tmp_rd_rows  <= to_integer((cfg_rd_cnt_temp.last_row + 1) * DATA_WIDTH + cfg_rd_cnt_temp.remainder);
         else
-          tmp_rd_rows    <= to_integer((cfg_rd_cnt_temp.last_row + 0) * DATA_WIDTH);
+          tmp_rd_rows  <= to_integer((cfg_rd_cnt_temp.last_row + 0) * DATA_WIDTH);
         end if;
         tmp_rd_columns <= to_integer(cfg_rd_cnt_temp.last_column + 1);
 
@@ -559,21 +534,11 @@ begin
       m_wr_en_reg       <= m_wr_en;
       m_wr_last_reg     <= m_wr_last;
 
+      -- If pointers are different and the AXI adapter has space, keep writing
       if m_wr_full = '0' and rd_ram_ptr /= wr_ram_ptr then
 
-        rd_first_word   <= '0';
-
-        -- if rd_column_cnt = 0 and rd_row_cnt = 0 then
-        --   cfg_rd_cnt <= get_cnt_max_values(cfg_rd_constellation, cfg_rd_frame_type);
-
-        --   -- -- This will be used for the reading side
-        --   -- cfg_rd_constellation <= cfg_wr_constellation;
-        --   -- cfg_rd_frame_type    <= cfg_wr_frame_type;
-        --   -- cfg_rd_code_rate     <= cfg_wr_code_rate;
-        -- end if;
-
-        -- If pointers are different and the AXI adapter has space, keep writing
-        m_wr_en <= '1';
+        rd_first_word <= '0';
+        m_wr_en       <= '1';
 
         -- Read pointers control logic
         if rd_column_cnt < tmp_rd_columns - 1 then
@@ -605,15 +570,6 @@ begin
             ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
             rd_first_word <= '1';
           end if;
-        -- else
-        --   if rd_row_cnt >= tmp_rd_rows + DATA_WIDTH then
-        --     rd_column_cnt <= (others => '0');
-        --     rd_row_cnt    <= (others => '0');
-        --     rd_ram_ptr    <= rd_ram_ptr + 1;
-        --     m_wr_last     <= '1';
-        --     ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
-        --     rd_first_word <= '1';
-        --   end if;
         end if;
 
       end if;
