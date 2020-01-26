@@ -152,7 +152,7 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal wr_remainder         : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
   signal wr_partial           : std_logic;
   signal wr_partial_start     : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
-  
+
   signal wr_data_shifted      : std_logic_vector(DATA_WIDTH - 1 downto 0);
 
   signal wr_addr_init         : std_logic := '0';
@@ -163,6 +163,10 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal ram_wr_en            : std_logic_vector(MAX_COLUMNS - 1 downto 0);
 
   -- Read side config
+  signal fifo_rd_constellation : constellation_t;
+  signal fifo_rd_frame_type    : frame_type_t;
+  signal fifo_rd_code_rate     : code_rate_t;
+
   signal cfg_rd_constellation : constellation_t;
   signal cfg_rd_frame_type    : frame_type_t;
   signal cfg_rd_code_rate     : code_rate_t;
@@ -193,8 +197,8 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal m_wr_last            : std_logic := '0';
   signal m_wr_last_reg        : std_logic := '0';
 
-  signal wr_first_word  : std_logic; -- To sample config
-  signal rd_first_word  : std_logic; -- To sample config
+  signal wr_first_word        : std_logic; -- To sample config
+  signal rd_first_word        : std_logic; -- To sample config
 
   signal tmp_rd_rows    : integer;
   signal tmp_rd_columns : integer;
@@ -268,22 +272,19 @@ begin
 
     signal wr_full : std_logic;
     signal wr_data : std_logic_vector(FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH + CODE_RATE_WIDTH - 1 downto 0);
+    signal rd_en   : std_logic;
     signal rd_data : std_logic_vector(FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH + CODE_RATE_WIDTH - 1 downto 0);
   begin
 
     -- Squeeze config in
-    wr_data <= to_std_logic_vector(cfg_wr_code_rate) &
-               to_std_logic_vector(cfg_wr_constellation) &
-               to_std_logic_vector(cfg_wr_frame_type);
+    wr_data <= encode(cfg_wr_code_rate) &
+               encode(cfg_wr_constellation) &
+               encode(cfg_wr_frame_type);
 
     -- Then extract it back
-    cfg_rd_code_rate     <= from_std_logic_vector(
-                              rd_data(rd_data'length - 1 downto FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH));
-
-    cfg_rd_constellation <= from_std_logic_vector(
-                              rd_data(FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH - 1 downto FRAME_TYPE_WIDTH));
-
-    cfg_rd_frame_type    <= from_std_logic_vector(rd_data(FRAME_TYPE_WIDTH - 1 downto 0));
+    fifo_rd_code_rate     <= decode(rd_data(rd_data'length - 1 downto FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH));
+    fifo_rd_constellation <= decode(rd_data(FRAME_TYPE_WIDTH + CONSTELLATION_WIDTH - 1 downto FRAME_TYPE_WIDTH));
+    fifo_rd_frame_type    <= decode(rd_data(FRAME_TYPE_WIDTH - 1 downto 0));
 
     -- First word samples config, whenever it's deasserted we can write the config
     wr_en_gen: entity work.edge_detector
@@ -294,11 +295,26 @@ begin
         -- Usual ports
         clk     => clk,
         clken   => '1',
-        -- 
+        --
         din     => wr_first_word,
         -- Edges detected
         rising  => open,
         falling => wr_cfg_wr_en,
+        toggle  => open);
+
+    rd_en_gen: entity work.edge_detector
+      generic map (
+        SYNCHRONIZE_INPUT => False,
+        OUTPUT_DELAY      => 0)
+      port map (
+        -- Usual ports
+        clk     => clk,
+        clken   => '1',
+        --
+        din     => rd_first_word,
+        -- Edges detected
+        rising  => open,
+        falling => rd_en,
         toggle  => open);
 
     -- Not really a FIFO but uses less logic
@@ -317,7 +333,7 @@ begin
         wr_last  => '0',
         -- AXI master
         m_tvalid => open,
-        m_tready => m_wr_last,
+        m_tready => rd_en,
         m_tdata  => rd_data,
         m_tlast  => open);
 
@@ -512,7 +528,12 @@ begin
       -- if s_axi_dv = '1' and s_tlast = '1' then
       if rd_first_word = '1' then
         -- TODO: Read side counts bits not words, write this properly
-        cfg_rd_cnt_temp := get_cnt_max_values(cfg_wr_constellation, cfg_wr_frame_type);
+        cfg_rd_cnt_temp := get_cnt_max_values(fifo_rd_constellation, fifo_rd_frame_type);
+
+        -- Sample data form the config FIFO whenever we read from it
+        cfg_rd_constellation <= fifo_rd_constellation;
+        cfg_rd_frame_type    <= fifo_rd_frame_type;
+        cfg_rd_code_rate     <= fifo_rd_code_rate;
 
         if cfg_rd_cnt_temp.remainder /= 0 then
           tmp_rd_rows  <= to_integer((cfg_rd_cnt_temp.last_row + 1) * DATA_WIDTH + cfg_rd_cnt_temp.remainder);

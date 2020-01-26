@@ -42,9 +42,10 @@ use work.file_utils_pkg.all;
 
 entity axi_bit_interleaver_tb is
   generic (
-    runner_cfg : string;
-    DATA_WIDTH : integer := 8;
-    test_cfg   : string);
+    RUNNER_CFG            : string;
+    TEST_CFG              : string;
+    DATA_WIDTH            : integer := 8;
+    NUMBER_OF_TEST_FRAMES : integer := 8);
 end axi_bit_interleaver_tb;
 
 architecture axi_bit_interleaver_tb of axi_bit_interleaver_tb is
@@ -52,13 +53,12 @@ architecture axi_bit_interleaver_tb of axi_bit_interleaver_tb is
   ---------------
   -- Constants --
   ---------------
-  constant configs           : config_array_t := get_test_cfg(test_cfg);
+  constant configs           : config_array_t := get_test_cfg(TEST_CFG);
 
   constant FILE_READER_NAME      : string := "file_reader";
   constant FILE_CHECKER_NAME     : string := "file_checker";
   constant CLK_PERIOD            : time := 5 ns;
   constant ERROR_CNT_WIDTH       : integer := 8;
-  constant NUMBER_OF_TEST_FRAMES : integer := 4;
 
   function get_checker_data_ratio ( constant constellation : in constellation_t)
   return string is
@@ -217,8 +217,6 @@ begin
       variable file_reader_msg  : msg_t;
     begin
 
-      set_timeout(runner, number_of_frames * 500 us);
-
       info("Running test with:");
       info(" - constellation  : " & constellation_t'image(config.constellation));
       info(" - frame_type     : " & frame_type_t'image(config.frame_type));
@@ -262,7 +260,7 @@ begin
 
   begin
 
-    test_runner_setup(runner, runner_cfg);
+    test_runner_setup(runner, RUNNER_CFG);
     show(display_handler, debug);
 
     while test_suite loop
@@ -273,6 +271,8 @@ begin
 
       tvalid_probability <= 1.0;
       tready_probability <= 1.0;
+
+      set_timeout(runner, configs'length * NUMBER_OF_TEST_FRAMES * 500 us);
 
       if run("back_to_back") then
         tvalid_probability <= 1.0;

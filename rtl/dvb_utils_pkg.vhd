@@ -42,13 +42,13 @@ package dvb_utils_pkg is
   constant CODE_RATE_WIDTH     : integer := code_rate_t'pos(code_rate_t'right);
 
   -- Encode/decode config types to std_logic_vectors
-  function to_std_logic_vector( constant v : frame_type_t ) return std_logic_vector;
-  function to_std_logic_vector( constant v : constellation_t ) return std_logic_vector;
-  function to_std_logic_vector( constant v : code_rate_t ) return std_logic_vector;
+  function encode( constant v : frame_type_t ) return std_logic_vector;
+  function encode( constant v : constellation_t ) return std_logic_vector;
+  function encode( constant v : code_rate_t ) return std_logic_vector;
 
-  function from_std_logic_vector( constant v : std_logic_vector ) return frame_type_t ;
-  function from_std_logic_vector( constant v : std_logic_vector ) return constellation_t;
-  function from_std_logic_vector( constant v : std_logic_vector ) return code_rate_t;
+  function decode( constant v : std_logic_vector ) return frame_type_t ;
+  function decode( constant v : std_logic_vector ) return constellation_t;
+  function decode( constant v : std_logic_vector ) return code_rate_t;
 
   function get_crc_length (
     constant frame_length : in  frame_type_t;
@@ -94,23 +94,23 @@ package body dvb_utils_pkg is
     return True;
   end;
 
-  function to_std_logic_vector( constant v : frame_type_t ) return std_logic_vector is
+  function encode( constant v : frame_type_t ) return std_logic_vector is
   begin
     return std_logic_vector(to_unsigned(frame_type_t'pos(v), FRAME_TYPE_WIDTH));
   end;
 
-  function to_std_logic_vector( constant v : constellation_t ) return std_logic_vector is
+  function encode( constant v : constellation_t ) return std_logic_vector is
   begin
     return std_logic_vector(to_unsigned(constellation_t'pos(v), CONSTELLATION_WIDTH));
   end;
 
-  function to_std_logic_vector( constant v : code_rate_t ) return std_logic_vector is
+  function encode( constant v : code_rate_t ) return std_logic_vector is
   begin
     return std_logic_vector(to_unsigned(code_rate_t'pos(v), CODE_RATE_WIDTH));
   end;
 
 
-  function from_std_logic_vector( constant v : std_logic_vector ) return frame_type_t is
+  function decode( constant v : std_logic_vector ) return frame_type_t is
   begin
     if to_x01(v) /= v then
       return not_set;
@@ -118,7 +118,7 @@ package body dvb_utils_pkg is
     return frame_type_t'val(to_integer(unsigned(to_x01(v))));
   end;
 
-  function from_std_logic_vector( constant v : std_logic_vector ) return constellation_t is
+  function decode( constant v : std_logic_vector ) return constellation_t is
   begin
     if to_x01(v) /= v then
       return not_set;
@@ -126,7 +126,7 @@ package body dvb_utils_pkg is
     return constellation_t 'val(to_integer(unsigned(v)));
   end;
 
-  function from_std_logic_vector( constant v : std_logic_vector ) return code_rate_t is
+  function decode( constant v : std_logic_vector ) return code_rate_t is
   begin
     if to_x01(v) /= v then
       return not_set;
