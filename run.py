@@ -143,7 +143,7 @@ def parametrizeTests(
     multiple config sets, all of them following the same structure; each config
     set is separated by the pipe ("|") character.
     """
-    test_cfg = []
+    all_configs = []
 
     for code_rate in CodeRate:
 
@@ -166,17 +166,17 @@ def parametrizeTests(
                         _logger.warning("No such file '%s'", reference_file_path)
                     continue
 
-                test_cfg += [
-                    ",".join(
-                        [
-                            constellation.name,
-                            frame_length.name,
-                            code_rate.name,
-                            input_file_path,
-                            reference_file_path,
-                        ]
-                    )
-                ]
+                test_cfg = ",".join(
+                    [
+                        constellation.name,
+                        frame_length.name,
+                        code_rate.name,
+                        input_file_path,
+                        reference_file_path,
+                    ]
+                )
+
+                all_configs += [test_cfg]
 
                 if detailed:
                     test_name = ",".join(
@@ -187,20 +187,20 @@ def parametrizeTests(
                         ]
                     )
                     entity.add_config(
-                        name=test_name, generics={"test_cfg": "|".join(test_cfg)}
+                        name=test_name,
+                        generics=dict(test_cfg=test_cfg, NUMBER_OF_TEST_FRAMES=8),
                     )
-                    test_cfg = []
 
-    if not detailed:
-        assert test_cfg, f"No tests found for {entity.name}"
-
-        entity.add_config(name="all_configs", generics={"test_cfg": "|".join(test_cfg)})
+    entity.add_config(
+        name="test_all_configs",
+        generics=dict(test_cfg="|".join(all_configs), NUMBER_OF_TEST_FRAMES=1),
+    )
 
 
 def addAxiStreamDelayTests(entity):
     "Parametrizes the delays for the AXI stream delay test"
     for delay in (1, 2, 8):
-        entity.add_config(name=f"delay={delay}", parameters={"DELAY_CYCLES": delay})
+        entity.add_config(name=f"delay={delay}", generics={"DELAY_CYCLES": delay})
 
 
 def addAxiFileCompareTests(entity):
@@ -248,7 +248,7 @@ def addAxiFileCompareTests(entity):
 
     entity.add_config(
         name="all",
-        parameters=dict(
+        generics=dict(
             input_file=test_file,
             reference_file=reference_file,
             tdata_single_error_file=tdata_single_error_file,
@@ -305,12 +305,12 @@ def addAxiFileReaderTests(entity):
             all_configs += [test_cfg]
 
             entity.add_config(
-                name=name, parameters={"DATA_WIDTH": data_width, "test_cfg": test_cfg}
+                name=name, generics={"DATA_WIDTH": data_width, "test_cfg": test_cfg}
             )
 
         entity.add_config(
             name=f"multiple,data_width={data_width}",
-            parameters={"DATA_WIDTH": data_width, "test_cfg": "|".join(all_configs)},
+            generics={"DATA_WIDTH": data_width, "test_cfg": "|".join(all_configs)},
         )
 
 
