@@ -391,7 +391,8 @@ begin
   -- Handle write side pointers --
   --------------------------------
   write_side_p : process(clk, rst)
-    variable wr_column_cnt_i : natural range 0 to MAX_COLUMNS - 1;
+    variable wr_column_cnt_i    : natural range 0 to MAX_COLUMNS - 1;
+    variable wr_partial_start_i : integer range 0 to DATA_WIDTH - 1;
   begin
     if rst = '1' then
       wr_column_cnt <= (others => '0');
@@ -404,8 +405,11 @@ begin
 
     elsif rising_edge(clk) then
 
-      wr_column_cnt_i := to_integer(wr_column_cnt);
+      -- Only to reduce footprint of converting to integer when slicing vectors
+      wr_column_cnt_i    := to_integer(wr_column_cnt);
+      wr_partial_start_i := to_integer(wr_partial_start);
 
+      --
       s_axi_dv_reg       <= s_axi_dv;
       s_tlast_reg        <= s_tlast;
       s_tdata_reg        <= s_tdata;
@@ -474,9 +478,10 @@ begin
             wr_column_cnt <= wr_column_cnt + 1;
             wr_partial    <= '1';
           else
-            -- wr_partial    <= '1';
             if cfg_wr_cnt.remainder /= 0 then
-              ram_wr_data(to_integer(wr_column_cnt_reg0)) <= s_tdata_reg(1 downto 0) & (5 downto 0 => '0');
+              ram_wr_data(to_integer(wr_column_cnt_reg0))
+                  <= s_tdata_reg(to_integer(cfg_wr_cnt.remainder) - 1 downto 0)
+                     & (DATA_WIDTH - to_integer(cfg_wr_cnt.remainder) - 1 downto 0 => '0');
             end if;
 
             wr_column_cnt <= (others => '0');
@@ -491,16 +496,11 @@ begin
       if wr_partial = '1' then
         ram_wr_en(to_integer(wr_column_cnt_reg0))   <= '1';
 
-        -- TODO: Write this properly to handle remainder values different than 2
-        if wr_partial_start = 0 then
-          ram_wr_data(to_integer(wr_column_cnt_reg0)) <= s_tdata_reg(7 downto 6) & (5 downto 0 => '0');
-        elsif wr_partial_start = 2 then
-          ram_wr_data(to_integer(wr_column_cnt_reg0)) <= s_tdata_reg(5 downto 4) & (5 downto 0 => '0');
-        elsif wr_partial_start = 4 then
-          ram_wr_data(to_integer(wr_column_cnt_reg0)) <= s_tdata_reg(3 downto 2) & (5 downto 0 => '0');
-        elsif wr_partial_start = 6 then
-          ram_wr_data(to_integer(wr_column_cnt_reg0)) <= s_tdata_reg(1 downto 0) & (5 downto 0 => '0');
-        end if;
+        ram_wr_data(to_integer(wr_column_cnt_reg0))
+          <= s_tdata_reg(DATA_WIDTH - wr_partial_start_i - 1
+                         downto
+                         DATA_WIDTH - wr_partial_start_i - to_integer(cfg_wr_cnt.remainder)) &
+                         (DATA_WIDTH - to_integer(cfg_wr_cnt.remainder) - 1 downto 0 => '0');
       end if;
 
     end if;
