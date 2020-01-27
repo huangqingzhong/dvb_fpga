@@ -53,7 +53,7 @@ architecture axi_bit_interleaver_tb of axi_bit_interleaver_tb is
   ---------------
   -- Constants --
   ---------------
-  constant configs           : config_array_t := get_test_cfg(TEST_CFG);
+  constant configs               : config_array_t := get_test_cfg(TEST_CFG);
 
   constant FILE_READER_NAME      : string := "file_reader";
   constant FILE_CHECKER_NAME     : string := "file_checker";

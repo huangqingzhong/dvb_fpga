@@ -73,53 +73,6 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
     remainder   : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
   end record;
 
-  impure function get_cnt_max_values (
-    constant constellation : in constellation_t;
-    constant frame_type    : in frame_type_t) return cfg_t is
-    variable rows          : natural;
-    variable columns       : natural;
-    variable remainder     : natural;
-  begin
-
-    if frame_type = fecframe_normal then
-      if constellation = mod_8psk then
-        rows := 21_600;
-      elsif constellation = mod_16apsk then
-        rows := 16_200;
-      elsif constellation = mod_32apsk then
-        rows := 12_960;
-      end if;
-    elsif frame_type = fecframe_short then
-      if constellation = mod_8psk then
-        rows := 5_400;
-      elsif constellation = mod_16apsk then
-        rows := 4_050;
-      elsif constellation = mod_32apsk then
-        rows := 3_240;
-      end if;
-    end if;
-
-    if constellation = mod_8psk then
-      columns := 3;
-    elsif constellation = mod_16apsk then
-      columns := 4;
-    elsif constellation = mod_32apsk then
-      columns := 5;
-    end if;
-
-    -- -- We don't handle rows not being an integer multiple of DATA_WIDTH yet
-    -- assert (rows mod DATA_WIDTH) = 0
-    --   report "Frame type '" & frame_type_t'image(frame_type) & "', " &
-    --          "constellation '" & constellation_t'image(constellation) &
-    --          " is not supported yet with DATA_WIDTH " & integer'image(DATA_WIDTH)
-    -- severity error;
-
-    return (last_row    => to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 1,
-            last_column => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,
-            remainder   => to_unsigned(rows mod DATA_WIDTH, numbits(DATA_WIDTH)));
-
-  end function get_cnt_max_values;
-
   type addr_array_t is array (natural range <>)
     of unsigned(numbits(MAX_ROWS) + RAM_PTR_WIDTH - 1 downto 0);
   type data_array_t is array (natural range <>) of std_logic_vector(DATA_WIDTH - 1 downto 0);
@@ -151,7 +104,7 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal wr_column_cnt_reg1   : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
   signal wr_remainder         : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
   signal wr_partial           : std_logic;
-  signal wr_partial_start     : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
+  signal wr_partial_start     : integer range 0 to DATA_WIDTH - 1;
 
   signal wr_data_shifted      : std_logic_vector(DATA_WIDTH - 1 downto 0);
 
@@ -172,7 +125,7 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal cfg_rd_code_rate     : code_rate_t;
 
   signal cfg_rd_cnt           : cfg_t;
-  signal rd_row_cnt           : unsigned(numbits(MAX_ROWS*DATA_WIDTH) - 1 downto 0);
+  signal rd_row_cnt           : unsigned(numbits(MAX_ROWS) - 1 downto 0);
 
   signal rd_column_cnt        : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
   signal rd_column_cnt_reg    : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
@@ -199,9 +152,6 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
 
   signal wr_first_word        : std_logic; -- To sample config
   signal rd_first_word        : std_logic; -- To sample config
-
-  signal tmp_rd_rows    : integer;
-  signal tmp_rd_columns : integer;
 
 begin
 
@@ -391,8 +341,50 @@ begin
   -- Handle write side pointers --
   --------------------------------
   write_side_p : process(clk, rst)
+
+    -------------------------------------------------------------------------------------
+    function get_wr_cnt_max_values (
+      constant constellation : in constellation_t;
+      constant frame_type    : in frame_type_t) return cfg_t is
+      variable rows          : natural;
+      variable columns       : natural;
+      variable remainder     : natural;
+    begin
+
+      if frame_type = fecframe_normal then
+        if constellation = mod_8psk then
+          rows := 21_600;
+        elsif constellation = mod_16apsk then
+          rows := 16_200;
+        elsif constellation = mod_32apsk then
+          rows := 12_960;
+        end if;
+      elsif frame_type = fecframe_short then
+        if constellation = mod_8psk then
+          rows := 5_400;
+        elsif constellation = mod_16apsk then
+          rows := 4_050;
+        elsif constellation = mod_32apsk then
+          rows := 3_240;
+        end if;
+      end if;
+
+      if constellation = mod_8psk then
+        columns := 3;
+      elsif constellation = mod_16apsk then
+        columns := 4;
+      elsif constellation = mod_32apsk then
+        columns := 5;
+      end if;
+
+      return (last_row    => to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 1,
+              last_column => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,
+              remainder   => to_unsigned(rows mod DATA_WIDTH, numbits(DATA_WIDTH)));
+
+    end function get_wr_cnt_max_values;
+    -------------------------------------------------------------------------------------
+
     variable wr_column_cnt_i    : natural range 0 to MAX_COLUMNS - 1;
-    variable wr_partial_start_i : integer range 0 to DATA_WIDTH - 1;
   begin
     if rst = '1' then
       wr_column_cnt <= (others => '0');
@@ -407,7 +399,6 @@ begin
 
       -- Only to reduce footprint of converting to integer when slicing vectors
       wr_column_cnt_i    := to_integer(wr_column_cnt);
-      wr_partial_start_i := to_integer(wr_partial_start);
 
       --
       s_axi_dv_reg       <= s_axi_dv;
@@ -417,7 +408,7 @@ begin
       wr_column_cnt_reg1 <= wr_column_cnt_reg0;
 
       wr_partial         <= '0';
-      wr_partial_start   <= wr_remainder;
+      wr_partial_start   <= to_integer(wr_remainder);
 
       ram_wr_en                    <= (others => '0');
       ram_wr_data(wr_column_cnt_i) <= wr_data_shifted;
@@ -434,7 +425,7 @@ begin
         wr_first_word  <= s_tlast;
 
         if wr_first_word = '1' then
-          cfg_wr_cnt           <= get_cnt_max_values(cfg_constellation, cfg_frame_type);
+          cfg_wr_cnt           <= get_wr_cnt_max_values(cfg_constellation, cfg_frame_type);
           cfg_wr_constellation <= cfg_constellation;
           cfg_wr_frame_type    <= cfg_frame_type;
           cfg_wr_code_rate     <= cfg_code_rate;
@@ -479,9 +470,9 @@ begin
             wr_partial    <= '1';
           else
             if cfg_wr_cnt.remainder /= 0 then
-              ram_wr_data(to_integer(wr_column_cnt_reg0))
-                  <= s_tdata_reg(to_integer(cfg_wr_cnt.remainder) - 1 downto 0)
-                     & (DATA_WIDTH - to_integer(cfg_wr_cnt.remainder) - 1 downto 0 => '0');
+              ram_wr_data(to_integer(wr_column_cnt_reg0)) <=
+                s_tdata_reg(to_integer(cfg_wr_cnt.remainder) - 1 downto 0)
+                & (DATA_WIDTH - to_integer(cfg_wr_cnt.remainder) - 1 downto 0 => '0');
             end if;
 
             wr_column_cnt <= (others => '0');
@@ -496,11 +487,13 @@ begin
       if wr_partial = '1' then
         ram_wr_en(to_integer(wr_column_cnt_reg0))   <= '1';
 
-        ram_wr_data(to_integer(wr_column_cnt_reg0))
-          <= s_tdata_reg(DATA_WIDTH - wr_partial_start_i - 1
-                         downto
-                         DATA_WIDTH - wr_partial_start_i - to_integer(cfg_wr_cnt.remainder)) &
-                         (DATA_WIDTH - to_integer(cfg_wr_cnt.remainder) - 1 downto 0 => '0');
+        ram_wr_data(to_integer(wr_column_cnt_reg0)) <=
+          s_tdata_reg(
+            DATA_WIDTH - wr_partial_start - 1
+            downto
+            DATA_WIDTH - wr_partial_start - to_integer(cfg_wr_cnt.remainder))
+          & (DATA_WIDTH - to_integer(cfg_wr_cnt.remainder) - 1 downto 0 => '0');
+
       end if;
 
     end if;
@@ -510,39 +503,71 @@ begin
   -- Handle read side pointers --
   -------------------------------
   read_side_p : process(clk, rst)
-    variable cfg_rd_cnt_temp : cfg_t;
+
+    -------------------------------------------------------------------------------------
+    -- Read side has a slightly different set of counter limits
+    function get_rd_cnt_max_values (
+      constant constellation : in constellation_t;
+      constant frame_type    : in frame_type_t) return cfg_t is
+      variable rows          : natural;
+      variable columns       : natural;
+      variable remainder     : natural;
+    begin
+
+      if frame_type = fecframe_normal then
+        if constellation = mod_8psk then
+          rows := 21_600;
+        elsif constellation = mod_16apsk then
+          rows := 16_200;
+        elsif constellation = mod_32apsk then
+          rows := 12_960;
+        end if;
+      elsif frame_type = fecframe_short then
+        if constellation = mod_8psk then
+          rows := 5_400;
+        elsif constellation = mod_16apsk then
+          rows := 4_050;
+        elsif constellation = mod_32apsk then
+          rows := 3_240;
+        end if;
+      end if;
+
+      if constellation = mod_8psk then
+        columns := 3;
+      elsif constellation = mod_16apsk then
+        columns := 4;
+      elsif constellation = mod_32apsk then
+        columns := 5;
+      end if;
+
+      remainder := rows mod DATA_WIDTH;
+      rows := rows / DATA_WIDTH;
+
+      if remainder /= 0 then
+        rows := rows + 1;
+      end if;
+
+      return (last_row    => to_unsigned(rows, numbits(MAX_ROWS)) - 1,
+              last_column => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,
+              remainder   => to_unsigned(remainder, numbits(DATA_WIDTH)));
+
+    end function get_rd_cnt_max_values;
+    -------------------------------------------------------------------------------------
+
   begin
     if rst = '1' then
-      rd_row_cnt      <= (others => '0');
-      rd_column_cnt   <= (others => '0');
-      rd_ram_ptr      <= (others => '0');
+      m_wr_en       <= '0';
+      m_wr_last     <= '0';
 
-      ram_rd_addr     <= (others => '0');
+      rd_row_cnt    <= (others => '0');
+      rd_column_cnt <= (others => '0');
+      rd_ram_ptr    <= (others => '0');
 
-      cfg_rd_cnt      <= (others => (others => '1'));
+      ram_rd_addr   <= (others => '0');
 
-      rd_first_word   <= '1';
+      rd_first_word <= '1';
 
     elsif clk'event and clk = '1' then
-
-      -- if s_axi_dv = '1' and s_tlast = '1' then
-      if rd_first_word = '1' then
-        -- TODO: Read side counts bits not words, write this properly
-        cfg_rd_cnt_temp := get_cnt_max_values(fifo_rd_constellation, fifo_rd_frame_type);
-
-        -- Sample data form the config FIFO whenever we read from it
-        cfg_rd_constellation <= fifo_rd_constellation;
-        cfg_rd_frame_type    <= fifo_rd_frame_type;
-        cfg_rd_code_rate     <= fifo_rd_code_rate;
-
-        if cfg_rd_cnt_temp.remainder /= 0 then
-          tmp_rd_rows  <= to_integer((cfg_rd_cnt_temp.last_row + 1) * DATA_WIDTH + cfg_rd_cnt_temp.remainder);
-        else
-          tmp_rd_rows  <= to_integer((cfg_rd_cnt_temp.last_row + 0) * DATA_WIDTH);
-        end if;
-        tmp_rd_columns <= to_integer(cfg_rd_cnt_temp.last_column + 1);
-
-      end if;
 
       m_wr_en   <= '0';
       m_wr_last <= '0';
@@ -553,6 +578,16 @@ begin
       m_wr_en_reg       <= m_wr_en;
       m_wr_last_reg     <= m_wr_last;
 
+      if rd_first_word = '1' then
+        cfg_rd_cnt <= get_rd_cnt_max_values(fifo_rd_constellation, fifo_rd_frame_type);
+
+        -- Sample data form the config FIFO whenever we read from it
+        cfg_rd_constellation <= fifo_rd_constellation;
+        cfg_rd_frame_type    <= fifo_rd_frame_type;
+        cfg_rd_code_rate     <= fifo_rd_code_rate;
+
+      end if;
+
       -- If pointers are different and the AXI adapter has space, keep writing
       if m_wr_full = '0' and rd_ram_ptr /= wr_ram_ptr then
 
@@ -560,18 +595,15 @@ begin
         m_wr_en       <= '1';
 
         -- Read pointers control logic
-        if rd_column_cnt < tmp_rd_columns - 1 then
+        if rd_column_cnt /= cfg_rd_cnt.last_column then
           rd_column_cnt <= rd_column_cnt + 1;
         else
           rd_column_cnt <= (others => '0');
 
-          -- FIXME: Change tmp_rd_rows on the fly instead of doing this
-          if rd_row_cnt < tmp_rd_rows then
-            rd_row_cnt  <= rd_row_cnt + DATA_WIDTH;
+          if rd_row_cnt /= cfg_rd_cnt.last_row then
+            rd_row_cnt  <= rd_row_cnt + 1;
             ram_rd_addr <= ram_rd_addr + 1;
           else
-            -- report "interesting..."
-            -- severity failure;
             rd_row_cnt    <= (others => '0');
             rd_ram_ptr    <= rd_ram_ptr + 1;
             m_wr_last     <= '1';
@@ -580,15 +612,13 @@ begin
           end if;
         end if;
 
-        if cfg_rd_cnt_temp.remainder /= 0 then
-          if rd_row_cnt + DATA_WIDTH > tmp_rd_rows then
-            rd_column_cnt <= (others => '0');
-            rd_row_cnt    <= (others => '0');
-            rd_ram_ptr    <= rd_ram_ptr + 1;
-            m_wr_last     <= '1';
-            ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
-            rd_first_word <= '1';
-          end if;
+        if cfg_rd_cnt.remainder /= 0 and rd_row_cnt + 1 > cfg_rd_cnt.last_row then
+          rd_column_cnt <= (others => '0');
+          rd_row_cnt    <= (others => '0');
+          rd_ram_ptr    <= rd_ram_ptr + 1;
+          m_wr_last     <= '1';
+          ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
+          rd_first_word <= '1';
         end if;
 
       end if;
