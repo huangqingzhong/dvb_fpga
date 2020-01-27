@@ -27,7 +27,6 @@ import os.path as p
 import random
 import struct
 import sys
-from collections import namedtuple
 from enum import Enum
 
 from vunit import VUnit  # type: ignore
@@ -61,17 +60,29 @@ def main():
     addAxiFileCompareTests(cli.library("lib").entity("axi_file_compare_tb"))
 
     parametrizeTests(
+        entity=cli.library("lib").entity("axi_bch_encoder_tb"),
+        input_file_basename="bch_encoder_input.bin",
+        reference_file_basename="ldpc_encoder_input.bin",
+        detailed=True,
+    )
+
+    parametrizeTests(
         entity=cli.library("lib").entity("axi_bit_interleaver_tb"),
         input_file_basename="bit_interleaver_input.bin",
         reference_file_basename="bit_interleaver_output.bin",
         detailed=True,
     )
 
-    parametrizeTests(
+    addAllConfigsTest(
         entity=cli.library("lib").entity("axi_bch_encoder_tb"),
         input_file_basename="bch_encoder_input.bin",
         reference_file_basename="ldpc_encoder_input.bin",
-        detailed=True,
+    )
+
+    addAllConfigsTest(
+        entity=cli.library("lib").entity("axi_bit_interleaver_tb"),
+        input_file_basename="bit_interleaver_input.bin",
+        reference_file_basename="bit_interleaver_output.bin",
     )
 
     cli.set_compile_option("modelsim.vcom_flags", ["-explicit"])
@@ -84,9 +95,6 @@ def main():
     cli.set_sim_option("disable_ieee_warnings", True)
     cli.set_sim_option("modelsim.init_file.gui", p.join(ROOT, "wave.do"))
     cli.main()
-
-
-Parameters = namedtuple("Parameters", ("constellation", "frame_length", "code_rate"))
 
 
 class ConstellationType(Enum):
@@ -143,7 +151,6 @@ def parametrizeTests(
     multiple config sets, all of them following the same structure; each config
     set is separated by the pipe ("|") character.
     """
-    all_configs = []
 
     for code_rate in CodeRate:
 
@@ -176,24 +183,60 @@ def parametrizeTests(
                     ]
                 )
 
-                all_configs += [test_cfg]
+                test_name = ",".join(
+                    [
+                        f"FrameLength={frame_length.value}",
+                        f"ConstellationType={constellation.value}",
+                        f"CodeRate={code_rate.value}",
+                    ]
+                )
+                entity.add_config(
+                    name=test_name,
+                    generics=dict(test_cfg=test_cfg, NUMBER_OF_TEST_FRAMES=8),
+                )
 
-                if detailed:
-                    test_name = ",".join(
+
+def addAllConfigsTest(entity, input_file_basename, reference_file_basename):
+
+    configs = []
+
+    for code_rate in CodeRate:
+        for frame_length in FrameLength:
+            for constellation in ConstellationType:
+
+                data_files = p.join(
+                    ROOT,
+                    "gnuradio_data",
+                    f"{frame_length.name}_{constellation.name}_{code_rate.name}".upper(),
+                )
+
+                input_file_path = p.join(data_files, input_file_basename)
+                reference_file_path = p.join(data_files, reference_file_basename)
+
+                if not p.exists(input_file_path) or not p.exists(reference_file_path):
+                    if not p.exists(input_file_path):
+                        _logger.warning("No such file '%s'", input_file_path)
+                    if not p.exists(reference_file_path):
+                        _logger.warning("No such file '%s'", reference_file_path)
+                    continue
+
+                configs += [
+                    ",".join(
                         [
-                            f"FrameLength={frame_length.value}",
-                            f"ConstellationType={constellation.value}",
-                            f"CodeRate={code_rate.value}",
+                            constellation.name,
+                            frame_length.name,
+                            code_rate.name,
+                            input_file_path,
+                            reference_file_path,
                         ]
                     )
-                    entity.add_config(
-                        name=test_name,
-                        generics=dict(test_cfg=test_cfg, NUMBER_OF_TEST_FRAMES=8),
-                    )
+                ]
+
+    random.shuffle(configs)
 
     entity.add_config(
         name="test_all_configs",
-        generics=dict(test_cfg="|".join(all_configs), NUMBER_OF_TEST_FRAMES=1),
+        generics=dict(test_cfg="|".join(configs), NUMBER_OF_TEST_FRAMES=1),
     )
 
 
