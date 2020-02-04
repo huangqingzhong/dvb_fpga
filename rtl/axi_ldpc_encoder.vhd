@@ -35,24 +35,29 @@ use work.dvb_utils_pkg.all;
 -- Entity declaration --
 ------------------------
 entity axi_ldpc_encoder is
+  generic (
+    DATA_WIDTH : positive := 8
+  );
   port (
     -- Usual ports
-    clk           : in  std_logic;
-    rst           : in  std_logic;
+    clk               : in  std_logic;
+    rst               : in  std_logic;
 
-    cfg_ldpc_code : in  ldpc_code_type;
+    cfg_constellation : in  constellation_t;
+    cfg_frame_type    : in  frame_type_t;
+    cfg_code_rate     : in  code_rate_t;
 
     -- AXI input
-    s_tvalid      : in  std_logic;
-    s_tdata       : in  std_logic_vector(7 downto 0);
-    s_tlast       : in  std_logic;
-    s_tready      : out std_logic;
+    s_tvalid          : in  std_logic;
+    s_tdata           : in  std_logic_vector(DATA_WIDTH - 1 downto 0);
+    s_tlast           : in  std_logic;
+    s_tready          : out std_logic;
 
     -- AXI output
-    m_tready      : in  std_logic;
-    m_tvalid      : out std_logic;
-    m_tlast       : out std_logic;
-    m_tdata       : out std_logic_vector(7 downto 0));
+    m_tready          : in  std_logic;
+    m_tvalid          : out std_logic;
+    m_tlast           : out std_logic;
+    m_tdata           : out std_logic_vector(DATA_WIDTH - 1 downto 0));
 end axi_ldpc_encoder;
 
 architecture axi_ldpc_encoder of axi_ldpc_encoder is
@@ -60,209 +65,138 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   ---------------
   -- Constants --
   ---------------
-  constant DATA_WIDTH : integer := 8;
+  -- 
+  constant MAX_UNCODED_FRAME_SIZE : integer := 58_320 / DATA_WIDTH;
+  constant MAX_CODED_FRAME_SIZE   : integer := 64_800 / DATA_WIDTH;
 
-  -- Largest block to add is 48,600 bits
-  constant MAX_WORD_CNT : integer := 48_600 / DATA_WIDTH;
-
-  -- Gets the length in beats of the amount of data to append to the frame
-  impure function get_encoding_length (
-    constant ldpc_code : in ldpc_code_type) return integer is
-    variable result    : integer := -1;
-  begin
-    case ldpc_code is
-      when ldpc_1_4  => result := 48_600;
-      when ldpc_1_3  => result := 43_200;
-      when ldpc_2_5  => result := 38_880;
-      when ldpc_1_2  => result := 32_400;
-      when ldpc_3_5  => result := 25_920;
-      when ldpc_2_3  => result := 21_600;
-      when ldpc_3_4  => result := 16_200;
-      when ldpc_4_5  => result := 12_960;
-      when ldpc_5_6  => result := 10_800;
-      when ldpc_8_9  => result := 7_200;
-      when ldpc_9_10 => result := 6_480;
-      when others => 
-        report sformat("Invalid LDPC code: '%s'", ldpc_code_type'image(ldpc_code))
-          severity Failure;
-    end case;
-    -- This is mostly static, so division should not be a problem. In any case,
-    -- TDATA_WIDTH will always be a power of 2, so this division will map to a shift
-    -- operation
-    return (result / DATA_WIDTH);
-  end function get_encoding_length;
+  constant FRAME_PTR_DEPTH        : integer := 2;
 
   -------------
   -- Signals --
   -------------
-  signal ldpc_code             : ldpc_code_type;
-  signal cfg_ldpc_code_out     : ldpc_code_type;
-  signal s_axi_first_word     : std_logic;
+  signal constellation  : constellation_t;
+  signal frame_type     : frame_type_t;
+  signal code_rate      : code_rate_t;
 
-  signal axi_delay_tvalid     : std_logic;
-  signal axi_delay_tdata      : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal axi_delay_tlast      : std_logic;
-  signal axi_delay_tready     : std_logic;
+  signal s_axi_dv       : std_logic;
+  signal s_tready_i     : std_logic;
 
-  signal axi_delay_data_valid : std_logic;
-  signal s_axi_data_valid     : std_logic;
-  signal m_axi_data_valid     : std_logic;
+  signal diff_frame_ptr : unsigned(numbits(FRAME_PTR_DEPTH) - 1 downto 0);
+  signal wr_frame_ptr   : unsigned(numbits(FRAME_PTR_DEPTH) - 1 downto 0);
+  signal rd_frame_ptr   : unsigned(numbits(FRAME_PTR_DEPTH) - 1 downto 0);
 
-  -- Internals to wire output ports
-  signal s_tready_i           : std_logic;
-  signal m_tvalid_i           : std_logic := '0';
-  signal m_tlast_i            : std_logic := '0';
+  signal ram_wr_ptr     : unsigned(numbits(MAX_UNCODED_FRAME_SIZE) downto 0);
 
-  -- Largest is 192 bits, use a slice when handling polynomials with smaller contexts
-  signal ldpc_word_cnt         : unsigned(numbits(MAX_WORD_CNT) - 1 downto 0);
-  signal crc                  : std_logic_vector(191 downto 0);
-  signal crc_srl              : std_logic_vector(191 downto 0);
-  signal crc_sample           : std_logic := '0';
-  signal crc_sample_delay     : std_logic := '0';
+  signal ram_rd_ptr     : unsigned(numbits(MAX_UNCODED_FRAME_SIZE) downto 0);
+  signal ram_rd_data    : std_logic_vector(DATA_WIDTH - 1 downto 0);
 
 begin
 
   -------------------
   -- Port mappings --
   -------------------
-  -- Delay the incoming data to match the BCH calculation delay so we can switch to
-  -- appending without any bubbles
-  data_delay_block : block
-    signal tdata_agg_in  : std_logic_vector(DATA_WIDTH downto 0);
-    signal tdata_agg_out : std_logic_vector(DATA_WIDTH downto 0);
-  begin
-    tdata_agg_in    <= s_tlast & s_tdata;
-
-    axi_delay_tdata <= tdata_agg_out(DATA_WIDTH - 1 downto 0);
-    axi_delay_tlast <= tdata_agg_out(DATA_WIDTH);
-
-    data_delay_u : entity work.axi_stream_delay
+  frame_ram_u : entity work.ram_inference
     generic map (
-      DELAY_CYCLES => 2,
-      TDATA_WIDTH  => DATA_WIDTH + 1)
+      ADDR_WIDTH          => numbits(MAX_UNCODED_FRAME_SIZE) + 1,
+      DATA_WIDTH          => DATA_WIDTH,
+      RAM_INFERENCE_STYLE => "auto",
+      EXTRA_OUTPUT_DELAY  => 0)
     port map (
-      -- Usual ports
-      clk     => clk,
-      rst     => rst,
+      -- Port A
+      clk_a     => clk,
+      clken_a   => '1',
+      wren_a    => s_axi_dv,
+      addr_a    => std_logic_vector(ram_wr_ptr),
+      wrdata_a  => s_tdata,
+      rddata_a  => open,
 
-      -- AXI slave input
-      s_tvalid => s_tvalid,
-      s_tready => s_tready_i,
-      s_tdata  => tdata_agg_in,
-
-      -- AXI master output
-      m_tvalid => axi_delay_tvalid,
-      m_tready => axi_delay_tready,
-      m_tdata  => tdata_agg_out);
-  end block data_delay_block;
+      -- Port B
+      clk_b     => clk,
+      clken_b   => '1',
+      addr_b    => std_logic_vector(ram_rd_ptr),
+      rddata_b  => ram_rd_data);
 
   ------------------------------
   -- Asynchronous assignments --
   ------------------------------
-  s_axi_data_valid     <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
-  axi_delay_data_valid <= '1' when axi_delay_tvalid = '1' and axi_delay_tready = '1' else
-                          '0';
-  m_axi_data_valid     <= '1' when m_tready = '1' and m_tvalid_i = '1' else '0';
+  s_axi_dv     <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
+
+  diff_frame_ptr <= wr_frame_ptr - rd_frame_ptr when wr_frame_ptr > rd_frame_ptr else
+                    wr_frame_ptr + FRAME_PTR_DEPTH - rd_frame_ptr;
+
+  s_tready_i <= '1' when diff_frame_ptr < FRAME_PTR_DEPTH - 1 else '0';
 
   -- Assign internals
   s_tready <= s_tready_i;
-  m_tvalid <= m_tvalid_i;
-  m_tlast  <= m_tlast_i;
 
-  -- Mux AXI master output to either forward AXI slave (via AXI delay) or to append the
-  -- CRC
-  axi_delay_tready <= m_tready when ldpc_word_cnt = 0 else '0';
-
-  m_tvalid_i       <= '0' when rst = '1' else
-                      axi_delay_tvalid when ldpc_word_cnt = 0 else
-                      '1';
-
-  m_tdata          <= axi_delay_tdata when ldpc_word_cnt = 0 else
-                      crc_srl(crc_srl'length - 1 downto crc_srl'length - DATA_WIDTH);
-
-  m_tlast_i        <= '1' when ldpc_word_cnt = 1 else '0';
 
   ---------------
   -- Processes --
   ---------------
-  process(clk, rst)
+  write_side_p : process(clk, rst)
   begin
     if rst = '1' then
-      ldpc_word_cnt     <= (others => '0');
-      s_axi_first_word <= '1';
+      wr_frame_ptr <= (others => '0');
+      ram_wr_ptr   <= (others => '0');
     elsif clk'event and clk = '1' then
 
-      crc_sample       <= '0';
-      crc_sample_delay <= crc_sample;
-
-      if m_axi_data_valid = '1' and ldpc_word_cnt /= 0 then
-        -- Shift the CRC, tdata will be assigned to the MSB
-        crc_srl      <= crc_srl(crc_srl'length - DATA_WIDTH - 1 downto 0)
-                        & (DATA_WIDTH - 1 downto 0 => 'U');
-        ldpc_word_cnt <= ldpc_word_cnt - 1;
-      end if;
-
-      if s_axi_data_valid = '1' then
-        -- Need to mark the first word so the CRC block can reset the calculation
-        s_axi_first_word <= s_tlast;
-
-        -- Need to sync when the CRC output is actually what we want, since we won't
-        -- necessarily stop writing data to the CRC calculation block
+      if s_axi_dv = '1' then
+        ram_wr_ptr <= ram_wr_ptr + 1;
         if s_tlast = '1' then
-          crc_sample      <= '1';
+          wr_frame_ptr <= wr_frame_ptr + 1;
         end if;
-
-      end if;
-
-      -- Time when the CRC is actually completed to sample it
-      if crc_sample_delay = '1' then
-        crc_srl <= (others => '1');
-        -- -- CRC widths vary, by default BCH encoder mux fills in the LSB. Because we use
-        -- -- the MSB and shift it left, fill in the MSB part of the SRL
-        -- if unsigned(cfg_bch_code_out) = BCH_POLY_8 then
-        --   crc_srl <= crc(127 downto 0) & (63 downto 0 => 'U');
-        -- elsif unsigned(cfg_bch_code_out) = BCH_POLY_10 then
-        --   crc_srl <= crc(159 downto 0) & (31 downto 0 => 'U');
-        -- else
-        --   crc_srl <= crc;
-        -- end if;
-      end if;
-
-      -- Handle the completion of AXI delayed data (e.g tlast is high). When that
-      -- happens, load the CRC word counter, which will trigger switching to append CRC
-      -- mode
-      if axi_delay_data_valid = '1' and axi_delay_tlast = '1' then
-        -- TODO: Check if this uses the carry bit to reset
-        ldpc_word_cnt     <= to_unsigned(
-                              get_encoding_length(ldpc_code),
-                              ldpc_word_cnt'length);
       end if;
 
     end if;
   end process;
 
-  -- The BCH code is valid at the first word of the frame, but we must not rely on the
-  -- user keeping it unchanged. Hide this on a block to leave the core code a bit cleaner
-  ldpc_sample_block : block
-    signal ldpc_code_ff : ldpc_code_type;
+  read_side_p : process(clk, rst)
+  begin
+    if rst = '1' then
+      rd_frame_ptr <= (others => '0');
+      ram_rd_ptr   <= (others => '0');
+    elsif clk'event and clk = '1' then
+
+      if diff_frame_ptr /= 0 then
+      end if;
+
+    end if;
+  end process;
+
+
+  -- The config ports are valid at the first word of the frame, but we must not rely on
+  -- the user keeping it unchanged. Hide this on a block to leave the core code a bit
+  -- cleaner
+  config_sample_block : block
+    signal constellation_ff : constellation_t;
+    signal frame_type_ff    : frame_type_t;
+    signal code_rate_ff     : code_rate_t;
+    signal first_word       : std_logic;
   begin
 
-    ldpc_code <= cfg_ldpc_code when s_axi_first_word = '1' else ldpc_code_ff;
-   
+    constellation <= cfg_constellation when first_word = '1' else constellation_ff;
+    frame_type    <= cfg_frame_type when first_word = '1' else frame_type_ff;
+    code_rate     <= cfg_code_rate when first_word = '1' else code_rate_ff;
+
     process(clk, rst)
     begin
       if rst = '1' then
+        first_word  <= '1';
       elsif rising_edge(clk) then
-        if s_axi_data_valid = '1' then
+        if s_axi_dv = '1' then
+          first_word <= s_tlast;
+
           -- Sample the BCH code used on the first word
-          if s_axi_first_word = '1' then
-            ldpc_code_ff <= cfg_ldpc_code;
+          if first_word = '1' then
+            constellation_ff <= cfg_constellation;
+            frame_type_ff    <= cfg_frame_type;
+            code_rate_ff     <= cfg_code_rate;
           end if;
 
         end if;
+
       end if;
     end process;
-  end block ldpc_sample_block;
+  end block config_sample_block;
 
 end axi_ldpc_encoder;
-
