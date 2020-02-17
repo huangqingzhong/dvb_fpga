@@ -30,6 +30,7 @@ use str_format.str_format_pkg.all;
 
 use work.common_pkg.all;
 use work.dvb_utils_pkg.all;
+use work.ldpc_pkg.all;
 
 ------------------------
 -- Entity declaration --

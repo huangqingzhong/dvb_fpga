@@ -237,13 +237,6 @@ def main():
         reference_file_basename="bch_encoder_input.bin",
     )
 
-    addAllConfigsTest(
-        entity=cli.library("lib").entity("axi_ldpc_encoder_tb"),
-        configs=TEST_CONFIGS,
-        input_file_basename="ldpc_encoder_input.bin",
-        reference_file_basename="bit_interleaver_input.bin",
-    )
-
     # Uncomment this to test configs individually
     #  # BCH encoding doesn't depend on the constellation type, choose any
     #  for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,)):
@@ -257,6 +250,19 @@ def main():
     #              NUMBER_OF_TEST_FRAMES=8,
     #          ),
     #      )
+
+    for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,)):
+        cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
+            name=config.name,
+            generics=dict(
+                test_cfg=config.getTestConfig(
+                    input_file_path="bch_encoder_input.bin",
+                    reference_file_path="ldpc_encoder_input.bin",
+                )
+            ),
+        )
+
+        break
 
     for data_width in (1, 8):
         all_configs = []
