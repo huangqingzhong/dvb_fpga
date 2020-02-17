@@ -42,7 +42,7 @@ adduser --disabled-password \
 # Run test with GHDL
 su -l $USER -c \"                          \
   cd /project                           && \
-  yosys -m ghdl dvbs2_tx.ys $*\"
+  yosys -m ghdl build/yosys/dvbs2_tx.ys $*\"
 "
 
 # Need to add some variables so that uploading coverage from witihin the
