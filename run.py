@@ -214,6 +214,7 @@ def main():
 
     library = cli.add_library("lib")
     library.add_source_files(p.join(ROOT, "rtl", "*.vhd"))
+    library.add_source_files(p.join(ROOT, "rtl", "generated", "*.vhd"))
     library.add_source_files(p.join(ROOT, "rtl", "bch_generated", "*.vhd"))
 
     library.add_source_files(p.join(ROOT, "testbench", "*.vhd"))
