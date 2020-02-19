@@ -29,6 +29,8 @@ import os.path as p
 import sys
 from os import makedirs
 
+from tabulate import tabulate
+
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 _logger = logging.getLogger(__name__)
 
@@ -120,18 +122,32 @@ class LdpcTable:
             + ");"
         )
 
+    def getStats(self):
+        depth = len(self._table)
+        width = sum(self._widths.values())
+        total = depth * width
+
+        return dict(
+            depth=depth,
+            width=width,
+            entries=len(self._widths),
+            total=(total + 7) // 8,
+            brams_18k=max((width + 17) // 18, depth * width / 1024 / 18),
+            brams_36k=max((width + 35) // 36, depth * width / 1024 / 36),
+        )
+
     def render(self):
         _logger.debug("widths=%s", self._widths)
 
-        length = len(self._table)
+        depth = len(self._table)
         width = sum(self._widths.values())
-        brams_18k = max((width + 17) // 18, length * width / 1024 / 18)
-        brams_36k = max((width + 35) // 36, length * width / 1024 / 36)
+        brams_18k = max((width + 17) // 18, depth * width / 1024 / 18)
+        brams_36k = max((width + 35) // 36, depth * width / 1024 / 36)
 
         lines = [
-            f"  -- From {self._path}, table is {length}x{width} ({length*width/8.} bytes)",
+            f"  -- From {self._path}, table is {depth}x{width} ({depth*width/8.} bytes)",
             f"  -- Resource estimation: {brams_18k} x 18 kB BRAMs or {brams_36k} x 36 kB BRAMs",
-            f"  type {self.name}_t is array ({length - 1} downto 0) of std_logic_vector({width - 1} downto 0);",
+            f"  type {self.name}_t is array ({depth - 1} downto 0) of std_logic_vector({width - 1} downto 0);",
             "",
             f"  {self._getWidthArray()}",
             "",
@@ -139,7 +155,7 @@ class LdpcTable:
         ]
 
         for i, line in enumerate(self._table):
-            if i < length - 1:
+            if i < depth - 1:
                 lines.append(
                     f"    {i} => std_logic_vector({self._renderRamLine(line)}),"
                 )
@@ -152,8 +168,8 @@ class LdpcTable:
 
         _logger.info(
             "RAM has %.2f kb (%d x %d), or %d BRAMs",
-            length * width / 1024.0,
-            length,
+            depth * width / 1024.0,
+            depth,
             width,
             brams_18k,
         )
@@ -174,19 +190,39 @@ def main():
             "",
             "use work.common_pkg.all;",
             "",
-            "package ldpc_tables_pkg is",
-            "",
-            "",
         ]
     )
 
     paths = sys.argv[1:]
     paths.sort()
 
+    rendered_tables = ""
+
+    stats = []
+
     for path in paths:
         ldpc_table = LdpcTable(path)
-        lines += ldpc_table.render()
-        lines += "\n\n"
+        stats += [["--", ldpc_table.name] + list(ldpc_table.getStats().values())]
+        rendered_tables += ldpc_table.render()
+        rendered_tables += "\n\n"
+
+    lines += "\n-- Summary of statistics\n\n"
+    lines += tabulate(
+        stats,
+        headers=(
+            "--",
+            "table",
+            "depth",
+            "width (bits)",
+            "width (entries)",
+            "total (bytes)",
+            "18k BRAMs",
+            "36k BRAMs",
+        ),
+    )
+    lines += "\n".join(["", "", "package ldpc_tables_pkg is", "", "",])
+
+    lines += rendered_tables
 
     lines += "\n".join(
         [
