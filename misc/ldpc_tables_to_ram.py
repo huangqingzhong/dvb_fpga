@@ -147,7 +147,7 @@ class LdpcTable:
         lines = [
             f"  -- From {self._path}, table is {depth}x{width} ({depth*width/8.} bytes)",
             f"  -- Resource estimation: {brams_18k} x 18 kB BRAMs or {brams_36k} x 36 kB BRAMs",
-            f"  type {self.name}_t is array ({depth - 1} downto 0) of std_logic_vector({width - 1} downto 0);",
+            f"  subtype {self.name}_t is std_logic_vector_2d_t({depth - 1} downto 0)({width - 1} downto 0);",
             "",
             f"  {self._getWidthArray()}",
             "",

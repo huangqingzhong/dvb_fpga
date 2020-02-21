@@ -26,35 +26,35 @@ use work.common_pkg.all;
 
 -- Summary of statistics
 
---    table                    depth    width (bits)    width (entries)    total (bytes)    18k BRAMs    36k BRAMs
-----  ---------------------  -------  --------------  -----------------  ---------------  -----------  -----------
---    dvb_16200_s2_c10            40              37                  5              185            3            2
---    dvb_16200_s2_c1_t2_b1        9             171                 13              193           10            5
---    dvb_16200_s2_c2_t2_b8       15             170                 13              319           10            5
---    dvb_16200_s2_c3_t2_b9       18             168                 13              378           10            5
---    dvb_16200_s2_c4_t2_b2       20             100                  9              250            6            3
---    dvb_16200_s2_c5             27             160                 13              540            9            5
---    dvb_16200_s2_c6_t2_b4       30             156                 14              585            9            5
---    dvb_16200_s2_c7_t2_b5       33             133                 13              549            8            4
---    dvb_16200_s2_c8_t2_b6       35              30                  4              132            2            1
---    dvb_16200_s2_c9_t2_b7       37             139                 14              643            8            4
---    dvb_64800_s2_b1             45             196                 13             1103           11            6
---    dvb_64800_s2_b10           160              46                  5              920            3            2
---    dvb_64800_s2_b11           162              46                  5              932            3            2
---    dvb_64800_s2_b2             60             196                 13             1470           11            6
---    dvb_64800_s2_b3             72             196                 13             1764           11            6
---    dvb_64800_s2_b4_t2_a1       90             115                  9             1294            7            4
---    dvb_64800_s2_b5_t2_a2      108             184                 13             2484           11            6
---    dvb_64800_s2_b6            120             189                 14             2835           11            6
---    dvb_64800_s2_b7_t2_a4      135             164                 13             2768           10            5
---    dvb_64800_s2_b8_t2_a5      144             150                 12             2700            9            5
---    dvb_64800_s2_b9_t2_a6      150             177                 14             3319           10            5
+--    table                  Frame    Coding    depth    width (bits)    width (entries)    total (bytes)    18k BRAMs    36k BRAMs
+----  ---------------------  -----    ------  -------  --------------  -----------------  ---------------  -----------  -----------
+--    dvb_16200_s2_c8_t2_b6  Short    4/5          35              30                  4              132            2            1
+--    dvb_16200_s2_c10       Short    8/9          40              37                  5              185            3            2
+--    dvb_64800_s2_b10       Normal   8/9         160              46                  5              920            3            2
+--    dvb_64800_s2_b11       Normal   9/10        162              46                  5              932            3            2
+--    dvb_16200_s2_c4_t2_b2  Short    1/2          20             100                  9              250            6            3
+--    dvb_64800_s2_b4_t2_a1  Normal   1/2          90             115                  9             1294            7            4
+--    dvb_16200_s2_c1_t2_b1  Short    1/4           9             171                 13              193           10            5
+--    dvb_16200_s2_c2_t2_b8  Short    1/3          15             170                 13              319           10            5
+--    dvb_16200_s2_c3_t2_b9  Short    2/5          18             168                 13              378           10            5
+--    dvb_16200_s2_c5        Short    3/5          27             160                 13              540            9            5
+--    dvb_16200_s2_c6_t2_b4  Short    2/3          30             156                 14              585            9            5
+--    dvb_16200_s2_c7_t2_b5  Short    3/4          33             133                 13              549            8            4
+--    dvb_16200_s2_c9_t2_b7  Short    5/6          37             139                 14              643            8            4
+--    dvb_64800_s2_b1        Normal   1/4          45             196                 13             1103           11            6
+--    dvb_64800_s2_b2        Normal   1/3          60             196                 13             1470           11            6
+--    dvb_64800_s2_b3        Normal   2/5          72             196                 13             1764           11            6
+--    dvb_64800_s2_b5_t2_a2  Normal   3/5         108             184                 13             2484           11            6
+--    dvb_64800_s2_b6        Normal   2/3         120             189                 14             2835           11            6
+--    dvb_64800_s2_b7_t2_a4  Normal   3/4         135             164                 13             2768           10            5
+--    dvb_64800_s2_b8_t2_a5  Normal   4/5         144             150                 12             2700            9            5
+--    dvb_64800_s2_b9_t2_a6  Normal   5/6         150             177                 14             3319           10            5
 
 package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c10.txt, table is 40x37 (185.0 bytes)
   -- Resource estimation: 3 x 18 kB BRAMs or 2 x 36 kB BRAMs
-  type dvb_16200_s2_c10_t is array (39 downto 0) of std_logic_vector(36 downto 0);
+  subtype dvb_16200_s2_c10_t is std_logic_vector_2d_t(39 downto 0)(36 downto 0);
 
   constant DVB_16200_S2_C10_COLUMN_WIDTHS : integer_array_t := (0 => 2, 1 => 2, 2 => 11, 3 => 11, 4 => 11);
 
@@ -103,7 +103,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c1_t2_b1.txt, table is 9x171 (192.375 bytes)
   -- Resource estimation: 10 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_16200_s2_c1_t2_b1_t is array (8 downto 0) of std_logic_vector(170 downto 0);
+  subtype dvb_16200_s2_c1_t2_b1_t is std_logic_vector_2d_t(8 downto 0)(170 downto 0);
 
   constant DVB_16200_S2_C1_T2_B1_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 14, 2 => 14, 3 => 14, 4 => 14, 5 => 13, 6 => 14, 7 => 14, 8 => 14, 9 => 14, 10 => 14, 11 => 14, 12 => 14);
 
@@ -121,7 +121,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c2_t2_b8.txt, table is 15x170 (318.75 bytes)
   -- Resource estimation: 10 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_16200_s2_c2_t2_b8_t is array (14 downto 0) of std_logic_vector(169 downto 0);
+  subtype dvb_16200_s2_c2_t2_b8_t is std_logic_vector_2d_t(14 downto 0)(169 downto 0);
 
   constant DVB_16200_S2_C2_T2_B8_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 14, 2 => 14, 3 => 14, 4 => 14, 5 => 14, 6 => 14, 7 => 14, 8 => 13, 9 => 14, 10 => 14, 11 => 14, 12 => 13);
 
@@ -145,7 +145,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c3_t2_b9.txt, table is 18x168 (378.0 bytes)
   -- Resource estimation: 10 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_16200_s2_c3_t2_b9_t is array (17 downto 0) of std_logic_vector(167 downto 0);
+  subtype dvb_16200_s2_c3_t2_b9_t is std_logic_vector_2d_t(17 downto 0)(167 downto 0);
 
   constant DVB_16200_S2_C3_T2_B9_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 14, 2 => 14, 3 => 14, 4 => 14, 5 => 14, 6 => 14, 7 => 13, 8 => 13, 9 => 13, 10 => 14, 11 => 13, 12 => 14);
 
@@ -172,7 +172,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c4_t2_b2.txt, table is 20x100 (250.0 bytes)
   -- Resource estimation: 6 x 18 kB BRAMs or 3 x 36 kB BRAMs
-  type dvb_16200_s2_c4_t2_b2_t is array (19 downto 0) of std_logic_vector(99 downto 0);
+  subtype dvb_16200_s2_c4_t2_b2_t is std_logic_vector_2d_t(19 downto 0)(99 downto 0);
 
   constant DVB_16200_S2_C4_T2_B2_COLUMN_WIDTHS : integer_array_t := (0 => 3, 1 => 5, 2 => 14, 3 => 13, 4 => 13, 5 => 13, 6 => 13, 7 => 13, 8 => 13);
 
@@ -201,7 +201,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c5.txt, table is 27x160 (540.0 bytes)
   -- Resource estimation: 9 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_16200_s2_c5_t is array (26 downto 0) of std_logic_vector(159 downto 0);
+  subtype dvb_16200_s2_c5_t is std_logic_vector_2d_t(26 downto 0)(159 downto 0);
 
   constant DVB_16200_S2_C5_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 13, 2 => 13, 3 => 13, 4 => 13, 5 => 13, 6 => 13, 7 => 13, 8 => 13, 9 => 13, 10 => 13, 11 => 13, 12 => 13);
 
@@ -237,7 +237,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c6_t2_b4.txt, table is 30x156 (585.0 bytes)
   -- Resource estimation: 9 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_16200_s2_c6_t2_b4_t is array (29 downto 0) of std_logic_vector(155 downto 0);
+  subtype dvb_16200_s2_c6_t2_b4_t is std_logic_vector_2d_t(29 downto 0)(155 downto 0);
 
   constant DVB_16200_S2_C6_T2_B4_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 4, 2 => 13, 3 => 13, 4 => 12, 5 => 12, 6 => 11, 7 => 12, 8 => 13, 9 => 12, 10 => 13, 11 => 12, 12 => 13, 13 => 12);
 
@@ -276,7 +276,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c7_t2_b5.txt, table is 33x133 (548.625 bytes)
   -- Resource estimation: 8 x 18 kB BRAMs or 4 x 36 kB BRAMs
-  type dvb_16200_s2_c7_t2_b5_t is array (32 downto 0) of std_logic_vector(132 downto 0);
+  subtype dvb_16200_s2_c7_t2_b5_t is std_logic_vector_2d_t(32 downto 0)(132 downto 0);
 
   constant DVB_16200_S2_C7_T2_B5_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 4, 2 => 13, 3 => 12, 4 => 13, 5 => 11, 6 => 10, 7 => 12, 8 => 11, 9 => 12, 10 => 10, 11 => 10, 12 => 11);
 
@@ -318,7 +318,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c8_t2_b6.txt, table is 35x30 (131.25 bytes)
   -- Resource estimation: 2 x 18 kB BRAMs or 1 x 36 kB BRAMs
-  type dvb_16200_s2_c8_t2_b6_t is array (34 downto 0) of std_logic_vector(29 downto 0);
+  subtype dvb_16200_s2_c8_t2_b6_t is std_logic_vector_2d_t(34 downto 0)(29 downto 0);
 
   constant DVB_16200_S2_C8_T2_B6_COLUMN_WIDTHS : integer_array_t := (0 => 2, 1 => 4, 2 => 12, 3 => 12);
 
@@ -362,7 +362,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_16200_s2_c9_t2_b7.txt, table is 37x139 (642.875 bytes)
   -- Resource estimation: 8 x 18 kB BRAMs or 4 x 36 kB BRAMs
-  type dvb_16200_s2_c9_t2_b7_t is array (36 downto 0) of std_logic_vector(138 downto 0);
+  subtype dvb_16200_s2_c9_t2_b7_t is std_logic_vector_2d_t(36 downto 0)(138 downto 0);
 
   constant DVB_16200_S2_C9_T2_B7_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 3, 2 => 12, 3 => 12, 4 => 11, 5 => 10, 6 => 10, 7 => 10, 8 => 11, 9 => 9, 10 => 12, 11 => 12, 12 => 11, 13 => 12);
 
@@ -408,7 +408,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b1.txt, table is 45x196 (1102.5 bytes)
   -- Resource estimation: 11 x 18 kB BRAMs or 6 x 36 kB BRAMs
-  type dvb_64800_s2_b1_t is array (44 downto 0) of std_logic_vector(195 downto 0);
+  subtype dvb_64800_s2_b1_t is std_logic_vector_2d_t(44 downto 0)(195 downto 0);
 
   constant DVB_64800_S2_B1_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 16, 2 => 16, 3 => 16, 4 => 16, 5 => 16, 6 => 16, 7 => 16, 8 => 16, 9 => 16, 10 => 16, 11 => 16, 12 => 16);
 
@@ -462,7 +462,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b10.txt, table is 160x46 (920.0 bytes)
   -- Resource estimation: 3 x 18 kB BRAMs or 2 x 36 kB BRAMs
-  type dvb_64800_s2_b10_t is array (159 downto 0) of std_logic_vector(45 downto 0);
+  subtype dvb_64800_s2_b10_t is std_logic_vector_2d_t(159 downto 0)(45 downto 0);
 
   constant DVB_64800_S2_B10_COLUMN_WIDTHS : integer_array_t := (0 => 2, 1 => 5, 2 => 13, 3 => 13, 4 => 13);
 
@@ -631,7 +631,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b11.txt, table is 162x46 (931.5 bytes)
   -- Resource estimation: 3 x 18 kB BRAMs or 2 x 36 kB BRAMs
-  type dvb_64800_s2_b11_t is array (161 downto 0) of std_logic_vector(45 downto 0);
+  subtype dvb_64800_s2_b11_t is std_logic_vector_2d_t(161 downto 0)(45 downto 0);
 
   constant DVB_64800_S2_B11_COLUMN_WIDTHS : integer_array_t := (0 => 2, 1 => 5, 2 => 13, 3 => 13, 4 => 13);
 
@@ -802,7 +802,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b2.txt, table is 60x196 (1470.0 bytes)
   -- Resource estimation: 11 x 18 kB BRAMs or 6 x 36 kB BRAMs
-  type dvb_64800_s2_b2_t is array (59 downto 0) of std_logic_vector(195 downto 0);
+  subtype dvb_64800_s2_b2_t is std_logic_vector_2d_t(59 downto 0)(195 downto 0);
 
   constant DVB_64800_S2_B2_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 16, 2 => 16, 3 => 16, 4 => 16, 5 => 16, 6 => 16, 7 => 16, 8 => 16, 9 => 16, 10 => 16, 11 => 16, 12 => 16);
 
@@ -871,7 +871,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b3.txt, table is 72x196 (1764.0 bytes)
   -- Resource estimation: 11 x 18 kB BRAMs or 6 x 36 kB BRAMs
-  type dvb_64800_s2_b3_t is array (71 downto 0) of std_logic_vector(195 downto 0);
+  subtype dvb_64800_s2_b3_t is std_logic_vector_2d_t(71 downto 0)(195 downto 0);
 
   constant DVB_64800_S2_B3_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 16, 2 => 16, 3 => 16, 4 => 16, 5 => 16, 6 => 16, 7 => 16, 8 => 16, 9 => 16, 10 => 16, 11 => 16, 12 => 16);
 
@@ -952,7 +952,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b4_t2_a1.txt, table is 90x115 (1293.75 bytes)
   -- Resource estimation: 7 x 18 kB BRAMs or 4 x 36 kB BRAMs
-  type dvb_64800_s2_b4_t2_a1_t is array (89 downto 0) of std_logic_vector(114 downto 0);
+  subtype dvb_64800_s2_b4_t2_a1_t is std_logic_vector_2d_t(89 downto 0)(114 downto 0);
 
   constant DVB_64800_S2_B4_T2_A1_COLUMN_WIDTHS : integer_array_t := (0 => 3, 1 => 7, 2 => 15, 3 => 15, 4 => 15, 5 => 15, 6 => 15, 7 => 15, 8 => 15);
 
@@ -1051,7 +1051,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b5_t2_a2.txt, table is 108x184 (2484.0 bytes)
   -- Resource estimation: 11 x 18 kB BRAMs or 6 x 36 kB BRAMs
-  type dvb_64800_s2_b5_t2_a2_t is array (107 downto 0) of std_logic_vector(183 downto 0);
+  subtype dvb_64800_s2_b5_t2_a2_t is std_logic_vector_2d_t(107 downto 0)(183 downto 0);
 
   constant DVB_64800_S2_B5_T2_A2_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 15, 2 => 15, 3 => 15, 4 => 15, 5 => 15, 6 => 15, 7 => 15, 8 => 15, 9 => 15, 10 => 15, 11 => 15, 12 => 15);
 
@@ -1168,7 +1168,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b6.txt, table is 120x189 (2835.0 bytes)
   -- Resource estimation: 11 x 18 kB BRAMs or 6 x 36 kB BRAMs
-  type dvb_64800_s2_b6_t is array (119 downto 0) of std_logic_vector(188 downto 0);
+  subtype dvb_64800_s2_b6_t is std_logic_vector_2d_t(119 downto 0)(188 downto 0);
 
   constant DVB_64800_S2_B6_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 6, 2 => 15, 3 => 15, 4 => 15, 5 => 15, 6 => 15, 7 => 15, 8 => 14, 9 => 15, 10 => 15, 11 => 15, 12 => 15, 13 => 15);
 
@@ -1297,7 +1297,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b7_t2_a4.txt, table is 135x164 (2767.5 bytes)
   -- Resource estimation: 10 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_64800_s2_b7_t2_a4_t is array (134 downto 0) of std_logic_vector(163 downto 0);
+  subtype dvb_64800_s2_b7_t2_a4_t is std_logic_vector_2d_t(134 downto 0)(163 downto 0);
 
   constant DVB_64800_S2_B7_T2_A4_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 6, 2 => 14, 3 => 14, 4 => 14, 5 => 14, 6 => 14, 7 => 14, 8 => 14, 9 => 14, 10 => 14, 11 => 14, 12 => 14);
 
@@ -1441,7 +1441,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b8_t2_a5.txt, table is 144x150 (2700.0 bytes)
   -- Resource estimation: 9 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_64800_s2_b8_t2_a5_t is array (143 downto 0) of std_logic_vector(149 downto 0);
+  subtype dvb_64800_s2_b8_t2_a5_t is std_logic_vector_2d_t(143 downto 0)(149 downto 0);
 
   constant DVB_64800_S2_B8_T2_A5_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 6, 2 => 14, 3 => 14, 4 => 14, 5 => 14, 6 => 14, 7 => 14, 8 => 14, 9 => 14, 10 => 14, 11 => 14);
 
@@ -1594,7 +1594,7 @@ package ldpc_tables_pkg is
 
   -- From /home/souto/phase4ground/tables/ldpc/dvb/orig/dvb_64800_s2_b9_t2_a6.txt, table is 150x177 (3318.75 bytes)
   -- Resource estimation: 10 x 18 kB BRAMs or 5 x 36 kB BRAMs
-  type dvb_64800_s2_b9_t2_a6_t is array (149 downto 0) of std_logic_vector(176 downto 0);
+  subtype dvb_64800_s2_b9_t2_a6_t is std_logic_vector_2d_t(149 downto 0)(176 downto 0);
 
   constant DVB_64800_S2_B9_T2_A6_COLUMN_WIDTHS : integer_array_t := (0 => 4, 1 => 5, 2 => 14, 3 => 14, 4 => 14, 5 => 14, 6 => 14, 7 => 14, 8 => 14, 9 => 14, 10 => 14, 11 => 14, 12 => 14, 13 => 14);
 
