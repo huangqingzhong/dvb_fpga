@@ -1,4 +1,4 @@
-ghdl                                \
+ghdl --std=08                       \
   rtl/generated/ldpc_tables_pkg.vhd \
   rtl/bch_generated/bch_128x64.vhd  \
   rtl/bch_generated/bch_192x64.vhd  \
