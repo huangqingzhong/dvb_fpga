@@ -31,14 +31,12 @@ use str_format.str_format_pkg.all;
 use work.common_pkg.all;
 use work.dvb_utils_pkg.all;
 use work.ldpc_pkg.all;
+-- use work.ldpc_tables_pkg.all;
 
 ------------------------
 -- Entity declaration --
 ------------------------
 entity axi_ldpc_encoder is
-  generic (
-    DATA_WIDTH : positive := 8
-  );
   port (
     -- Usual ports
     clk               : in  std_logic;
@@ -50,7 +48,7 @@ entity axi_ldpc_encoder is
 
     -- AXI input
     s_tvalid          : in  std_logic;
-    s_tdata           : in  std_logic_vector(DATA_WIDTH - 1 downto 0);
+    s_tdata           : in  std_logic;
     s_tlast           : in  std_logic;
     s_tready          : out std_logic;
 
@@ -58,7 +56,7 @@ entity axi_ldpc_encoder is
     m_tready          : in  std_logic;
     m_tvalid          : out std_logic;
     m_tlast           : out std_logic;
-    m_tdata           : out std_logic_vector(DATA_WIDTH - 1 downto 0));
+    m_tdata           : out std_logic);
 end axi_ldpc_encoder;
 
 architecture axi_ldpc_encoder of axi_ldpc_encoder is
@@ -66,70 +64,140 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   ---------------
   -- Constants --
   ---------------
-  -- 
-  constant MAX_UNCODED_FRAME_SIZE : integer := 58_320 / DATA_WIDTH;
-  constant MAX_CODED_FRAME_SIZE   : integer := 64_800 / DATA_WIDTH;
+  constant ROM_DATA_WIDTH   : natural := numbits(max(DVB_N_LDPC));
+  constant ROM_ADDR_WIDTH   : natural := 16;
+  constant ROM_LENGTH_WIDTH : natural := 16;
 
-  constant FRAME_PTR_DEPTH        : integer := 2;
+  constant FRAME_RAM_DATA_WIDTH : natural := 16;
+  constant FRAME_RAM_ADDR_WIDTH : natural
+    := numbits((max(DVB_N_LDPC) + FRAME_RAM_DATA_WIDTH - 1) / FRAME_RAM_DATA_WIDTH);
 
   -------------
   -- Signals --
   -------------
-  signal constellation  : constellation_t;
-  signal frame_type     : frame_type_t;
-  signal code_rate      : code_rate_t;
+  signal constellation    : constellation_t;
+  signal frame_type       : frame_type_t;
+  signal code_rate        : code_rate_t;
 
-  signal s_axi_dv       : std_logic;
-  signal s_tready_i     : std_logic;
+  signal s_axi_dv         : std_logic;
 
-  signal diff_frame_ptr : unsigned(numbits(FRAME_PTR_DEPTH) - 1 downto 0);
-  signal wr_frame_ptr   : unsigned(numbits(FRAME_PTR_DEPTH) - 1 downto 0);
-  signal rd_frame_ptr   : unsigned(numbits(FRAME_PTR_DEPTH) - 1 downto 0);
+  -- Interface with the LDPC table ROM
+  signal rom_addr         : unsigned(ROM_ADDR_WIDTH - 1 downto 0);
+  signal rom_data         : std_logic_vector(ROM_DATA_WIDTH - 1 downto 0);
+  signal rom_last         : std_logic;
+  signal rom_q            : unsigned(LDPC_Q_WIDTH - 1 downto 0);
+  signal rom_table_length : unsigned(ROM_LENGTH_WIDTH - 1 downto 0);
 
-  signal ram_wr_ptr     : unsigned(numbits(MAX_UNCODED_FRAME_SIZE) downto 0);
+  signal rom_data_sync    : std_logic_vector(ROM_DATA_WIDTH - 1 downto 0);
+  signal rom_last_sync    : std_logic;
 
-  signal ram_rd_ptr     : unsigned(numbits(MAX_UNCODED_FRAME_SIZE) downto 0);
-  signal ram_rd_data    : std_logic_vector(DATA_WIDTH - 1 downto 0);
+  -- Interface with the frame RAM
+  signal frame_ram_en     : std_logic;
+  signal frame_addr       : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  signal frame_ram_wrdata : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  signal frame_ram_rddata : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
+  signal bit_index        : unsigned(numbits(ROM_DATA_WIDTH) - 1 downto 0);
+
+  signal first_group      : std_logic;
+  signal group_bit_cnt    : unsigned(numbits(DVB_LDPC_GROUP_LENGTH) - 1 downto 0);
+  signal group_cnt        : unsigned(numbits(max(DVB_N_LDPC) / DVB_LDPC_GROUP_LENGTH) - 1 downto 0);
+  signal frame_addr_sync  : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  signal bit_index_sync   : unsigned(numbits(ROM_DATA_WIDTH) - 1 downto 0);
+
+  signal s_tready_i       : std_logic;
+  signal m_tvalid_i       : std_logic;
+
+
+  signal dbg_bit_cnt      : natural := 0;
 
 begin
 
   -------------------
   -- Port mappings --
   -------------------
-  frame_ram_u : entity work.ram_inference
+  ldpc_rom_u : entity work.ldpc_rom
     generic map (
-      ADDR_WIDTH          => numbits(MAX_UNCODED_FRAME_SIZE) + 1,
-      DATA_WIDTH          => DATA_WIDTH,
+      LENGTH_WIDTH        => ROM_LENGTH_WIDTH,
+      ADDR_WIDTH          => ROM_ADDR_WIDTH,
+      DATA_WIDTH          => ROM_DATA_WIDTH,
       RAM_INFERENCE_STYLE => "auto",
       EXTRA_OUTPUT_DELAY  => 0)
     port map (
-      -- Port A
-      clk_a     => clk,
-      clken_a   => '1',
-      wren_a    => s_axi_dv,
-      addr_a    => std_logic_vector(ram_wr_ptr),
-      wrdata_a  => s_tdata,
-      rddata_a  => open,
+      -- Usual ports
+      clk        => clk,
 
-      -- Port B
-      clk_b     => clk,
-      clken_b   => '1',
-      addr_b    => std_logic_vector(ram_rd_ptr),
-      rddata_b  => ram_rd_data);
+      --
+      frame_type => frame_type,
+      code_rate  => code_rate,
+
+      q          => rom_q,
+      length     => rom_table_length,
+
+      --
+      addr       => std_logic_vector(rom_addr),
+      dout       => rom_data,
+      last       => rom_last);
+
+  rom_data_delay_u : entity work.sr_delay
+    generic map (
+      DELAY_CYCLES  => 1,
+      DATA_WIDTH    => rom_data'length,
+      EXTRACT_SHREG => True)
+    port map (
+      clk   => clk,
+      clken => '1',
+      din   => rom_data,
+      dout  => rom_data_sync);
+
+  rom_last_delay_u : entity work.sr_delay
+    generic map (
+      DELAY_CYCLES  => 1,
+      DATA_WIDTH    => 1,
+      EXTRACT_SHREG => True)
+    port map (
+      clk     => clk,
+      clken   => '1',
+      din(0)  => rom_last,
+      dout(0) => rom_last_sync);
+
+  frame_ram_u : entity work.ram_context
+    generic map (
+      ADDR_WIDTH          => FRAME_RAM_ADDR_WIDTH,
+      DATA_WIDTH          => FRAME_RAM_DATA_WIDTH,
+      RAM_INFERENCE_STYLE => "bram")
+    port map (
+      clk         => clk,
+      en          => frame_ram_en,
+      addr        => std_logic_vector(frame_addr),
+      context_out => frame_ram_rddata,
+      context_in  => frame_ram_wrdata);
 
   ------------------------------
   -- Asynchronous assignments --
   ------------------------------
-  s_axi_dv     <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
+  -- Values for the current word
+  frame_addr <= rom_data(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH));
+  bit_index  <= unsigned(rom_data(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0));
 
-  diff_frame_ptr <= wr_frame_ptr - rd_frame_ptr when wr_frame_ptr > rd_frame_ptr else
-                    wr_frame_ptr + FRAME_PTR_DEPTH - rd_frame_ptr;
+  -- Values synchronized with data from ram_context
+  frame_addr_sync <= rom_data_sync(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH));
+  bit_index_sync  <= unsigned(rom_data_sync(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0));
 
-  s_tready_i <= '1' when diff_frame_ptr < FRAME_PTR_DEPTH - 1 else '0';
+  first_group     <= '1' when group_cnt = 0 else '0';
+
+  -- AXI slave specifics
+  s_axi_dv   <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
+
+  s_tready_i <= m_tready when rom_addr = 0 else
+                rom_last;
+
+  m_tvalid_i <= s_tvalid;
+  m_tdata    <= s_tdata;
+  m_tlast    <= s_tlast;
 
   -- Assign internals
-  s_tready <= s_tready_i;
-
+  s_tready   <= s_tready_i;
+  m_tvalid   <= m_tvalid_i;
 
   ---------------
   -- Processes --
@@ -137,33 +205,31 @@ begin
   write_side_p : process(clk, rst)
   begin
     if rst = '1' then
-      wr_frame_ptr <= (others => '0');
-      ram_wr_ptr   <= (others => '0');
+      rom_addr      <= (others => '0');
+      group_cnt     <= (others => '0');
+      group_bit_cnt <= (others => '0');
     elsif clk'event and clk = '1' then
 
+      if s_axi_dv = '1' or rom_addr > 0 then
+        if rom_addr < rom_table_length - 1 then
+          rom_addr  <= rom_addr + 1;
+        else
+          rom_addr  <= (others => '0');
+        end if;
+      end if;
+
       if s_axi_dv = '1' then
-        ram_wr_ptr <= ram_wr_ptr + 1;
-        if s_tlast = '1' then
-          wr_frame_ptr <= wr_frame_ptr + 1;
+        dbg_bit_cnt <= dbg_bit_cnt + 1;
+        if group_bit_cnt < DVB_LDPC_GROUP_LENGTH - 1 then
+          group_bit_cnt <= group_bit_cnt + 1;
+        else
+          group_bit_cnt <= (others => '0');
+          group_cnt     <= group_cnt + 1;
         end if;
       end if;
 
     end if;
   end process;
-
-  read_side_p : process(clk, rst)
-  begin
-    if rst = '1' then
-      rd_frame_ptr <= (others => '0');
-      ram_rd_ptr   <= (others => '0');
-    elsif clk'event and clk = '1' then
-
-      if diff_frame_ptr /= 0 then
-      end if;
-
-    end if;
-  end process;
-
 
   -- The config ports are valid at the first word of the frame, but we must not rely on
   -- the user keeping it unchanged. Hide this on a block to leave the core code a bit

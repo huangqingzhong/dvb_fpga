@@ -26,6 +26,9 @@ use work.common_pkg.all;
 
 package dvb_utils_pkg is
 
+  -- Sizes
+  constant DVB_N_LDPC : integer_array_t := (16_200, 64_800);
+
   type frame_type_t is (not_set, fecframe_normal, fecframe_short);
 
   type constellation_t is ( not_set, mod_8psk, mod_16apsk, mod_32apsk);

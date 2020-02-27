@@ -35,11 +35,15 @@ package common_pkg is
 
   --
   type integer_array_t is array (natural range <>) of integer;
+  type integer_2d_array_t is array (natural range <>) of integer_array_t;
   function minimum(constant a, b : integer) return integer;
   function minimum(constant values : integer_array_t) return integer;
   function to_boolean( v : std_ulogic) return boolean;
 
   function max (constant a, b : integer) return integer;
+  function max (constant v : integer_array_t) return integer;
+
+  function sum (constant v : integer_array_t) return integer;
 
 end common_pkg;
 
@@ -119,11 +123,30 @@ package body common_pkg is
   --------------------------------------------------------------------------------------
   function max (constant a, b : integer) return integer is
   begin
-    if a > b then
-      return a;
-    else
-      return b;
-    end if;
+    return max((a, b));
+  end;
+
+  --------------------------------------------------------------------------------------
+  function max (constant v : integer_array_t) return integer is
+    variable result : integer := 0;
+  begin
+    for i in v'range loop
+      if v(i) > result then
+        result := v(i);
+      end if;
+    end loop;
+    return result;
+  end;
+
+  --------------------------------------------------------------------------------------
+  function sum (constant v : integer_array_t) return integer is
+    variable sum : natural;
+  begin
+    for i in v'range loop
+      sum := sum + v(i);
+    end loop;
+
+    return sum;
   end;
 
 end package body;

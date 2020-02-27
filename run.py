@@ -214,7 +214,7 @@ def main():
 
     library = cli.add_library("lib")
     library.add_source_files(p.join(ROOT, "rtl", "*.vhd"))
-    library.add_source_files(p.join(ROOT, "rtl", "generated", "*.vhd"))
+    library.add_source_files(p.join(ROOT, "rtl", "ldpc", "*.vhd"))
     library.add_source_files(p.join(ROOT, "rtl", "bch_generated", "*.vhd"))
 
     library.add_source_files(p.join(ROOT, "testbench", "*.vhd"))
@@ -252,18 +252,21 @@ def main():
     #          ),
     #      )
 
-    for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,)):
+    for config in _getAllConfigs(
+        constellations=(ConstellationType.MOD_8PSK,),
+        code_rates={CodeRate.C4_5,},
+        frame_lengths={FrameLength.FECFRAME_SHORT,},
+    ):
         cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
             name=config.name,
             generics=dict(
                 test_cfg=config.getTestConfig(
                     input_file_path="bch_encoder_input.bin",
                     reference_file_path="ldpc_encoder_input.bin",
-                )
+                ),
+                NUMBER_OF_TEST_FRAMES=1,
             ),
         )
-
-        break
 
     for data_width in (1, 8):
         all_configs = []

@@ -99,15 +99,16 @@ class LdpcTable:
         return widths
 
     def _renderRamLine(self, line):
-        items = [Unsigned(len(line), self._widths[0])]
+        items = [f"0 => {len(line)}"]
         for i in range(1, len(self._widths)):
             try:
-                item = repr(Unsigned(line[i - 1], self._widths[i]))
+                item = line[i - 1]
             except IndexError:
-                item = f"({self._widths[i] - 1} downto 0 => 'U')"
-            items.append(item)
+                #  item = f"({self._widths[i] - 1} downto 0 => 'U')"
+                item = -1
+            items.append(f"{i} => {item}")
 
-        return " & ".join([str(x) for x in items])
+        return ", ".join([str(x) for x in items])
 
     @property
     def name(self):
@@ -147,22 +148,18 @@ class LdpcTable:
         lines = [
             f"  -- From {self._path}, table is {depth}x{width} ({depth*width/8.} bytes)",
             f"  -- Resource estimation: {brams_18k} x 18 kB BRAMs or {brams_36k} x 36 kB BRAMs",
-            f"  subtype {self.name}_t is std_logic_vector_2d_t({depth - 1} downto 0)({width - 1} downto 0);",
-            "",
             f"  {self._getWidthArray()}",
             "",
-            f"  constant {self.name.upper()} : {self.name}_t := (",
+            f"  constant {self.name.upper()} : integer_2d_array_t := (",
         ]
 
         for i, line in enumerate(self._table):
+
+            this_line = f"    {i} => integer_array_t'({self._renderRamLine(line)})"
             if i < depth - 1:
-                lines.append(
-                    f"    {i} => std_logic_vector({self._renderRamLine(line)}),"
-                )
+                lines.append(f"{this_line},")
             else:
-                lines.append(
-                    f"    {i} => std_logic_vector({self._renderRamLine(line)})"
-                )
+                lines.append(f"{this_line}")
 
         lines.append("  );")
 
