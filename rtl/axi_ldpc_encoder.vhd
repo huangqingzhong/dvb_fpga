@@ -25,13 +25,9 @@ library	ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-library str_format;
-use str_format.str_format_pkg.all;
-
 use work.common_pkg.all;
 use work.dvb_utils_pkg.all;
 use work.ldpc_pkg.all;
--- use work.ldpc_tables_pkg.all;
 
 ------------------------
 -- Entity declaration --
@@ -68,19 +64,6 @@ end axi_ldpc_encoder;
 
 architecture axi_ldpc_encoder of axi_ldpc_encoder is
 
-  function bit_xor ( constant start : std_logic; constant v : std_logic_vector ) return std_logic_vector is
-    variable result : std_logic_vector(v'length - 1 downto 0);
-  begin
-    -- result(0) := v(0) xor start;
-    result(0) := start;
-
-    for i in 1 to v'length - 1 loop
-      result(i) := v(i) xor result(i - 1);
-    end loop;
-
-    return result;
-  end;
-
   ---------------
   -- Constants --
   ---------------
@@ -95,43 +78,43 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   -------------
   -- Signals --
   -------------
-  signal constellation    : constellation_t;
-  signal frame_type       : frame_type_t;
-  signal code_rate        : code_rate_t;
+  signal constellation        : constellation_t;
+  signal frame_type           : frame_type_t;
+  signal code_rate            : code_rate_t;
 
-  signal s_axi_dv         : std_logic;
-  signal s_ldpc_dv        : std_logic;
-  signal frame_ram_valid  : std_logic;
-  signal data_completed   : std_logic := '0';
+  signal s_axi_dv             : std_logic;
+  signal s_ldpc_dv            : std_logic;
+  signal frame_ram_ready      : std_logic;
+  signal data_completed       : std_logic := '0';
+  signal frame_bits_remaining : unsigned(numbits(max(DVB_N_LDPC)) - 1 downto 0);
 
   -- AXI data synchronized to the frame RAM output data
-  signal axi_tdata        : std_logic;
+  signal axi_tdata            : std_logic;
 
   -- Interface with the frame RAM
-  signal frame_ram_en     : std_logic;
-  signal frame_addr_in    : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
-  signal frame_addr_max   : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  signal frame_ram_en         : std_logic;
+  signal frame_addr_in        : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
 
   -- Frame RAM output
-  signal frame_addr_out   : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  signal frame_addr_out       : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
   -- bit_index is sync with frame_addr_out and rame_ram_rddata
-  signal bit_index        : std_logic_vector(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
-  signal frame_ram_rddata : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
+  signal bit_index            : std_logic_vector(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+  signal frame_ram_rddata     : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
 
   -- Frame RAM data loop
-  signal frame_ram_wrdata : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  signal frame_ram_wrdata     : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
 
-  signal first_tdata      : std_logic;
+  signal first_tdata          : std_logic;
 
-  signal extract_frame_data : std_logic := '0';
-  signal encoded_tdata    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  signal extract_frame_data   : std_logic := '0';
+  signal encoded_tdata        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
 
-  signal dbg_addr_0       : std_logic;
+  signal dbg_addr_0           : std_logic;
 
-  signal s_tready_i       : std_logic;
-  signal s_ldpc_tready_i  : std_logic;
-  signal m_tvalid_i       : std_logic;
-  signal bit_index_int    : natural range 0 to ROM_DATA_WIDTH - 1;
+  signal s_tready_i           : std_logic;
+  signal s_ldpc_tready_i      : std_logic;
+  signal m_tvalid_i           : std_logic;
+  signal bit_index_int        : natural range 0 to ROM_DATA_WIDTH - 1;
 
 begin
 
@@ -149,7 +132,7 @@ begin
       en_in       => frame_ram_en,
       addr_in     => std_logic_vector(frame_addr_in),
       -- Data checkout output
-      en_out      => frame_ram_valid,
+      en_out      => frame_ram_ready,
       addr_out    => frame_addr_out,
       context_out => frame_ram_rddata,
       -- Updated data input
@@ -171,7 +154,7 @@ begin
   ------------------------------
   -- Values for the current word
 
-  dbg_addr_0 <= frame_ram_valid when unsigned(frame_addr_out) = 0 else '0';
+  dbg_addr_0 <= frame_ram_ready when unsigned(frame_addr_out) = 0 else '0';
 
   -- Values synchronized with data from pipeline_context_ram
   bit_index_int  <= to_integer(unsigned(bit_index));
@@ -195,44 +178,61 @@ begin
   -- Processes --
   ---------------
   write_side_p : process(clk, rst)
-    variable ldpc_bit_length : unsigned(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-    variable xored_data      : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+    variable xored_data : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   begin
     if rst = '1' then
-      s_tready_i    <= '1';
-      encoded_tdata <= (others => 'U');
+      s_tready_i           <= '1';
+      encoded_tdata        <= (others => 'U');
+      frame_bits_remaining <= (others => '0');
     elsif rising_edge(clk) then
 
       -- Always return the context, will change only when needed
       frame_ram_wrdata <= frame_ram_rddata;
 
+      -- Frame RAM addressing depends if we're calculating the codes or extracting them
       if extract_frame_data = '0' then
         -- When on normal operation, extract RAM addr
         frame_addr_in <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
         frame_ram_en  <= s_ldpc_dv;
       else
-        -- When extracting frame data, increment the address until
-        if frame_addr_in /= frame_addr_max then
-          frame_addr_in      <= frame_addr_in + 1;
-        else
+        -- When extracting frame data, we need to complete the given frame. Since the
+        -- frame size is not always an integer multiple of the frame length, we also need
+        -- to check if data bit cnt has wrapped (MSB is 1).
+        if frame_bits_remaining = 0 or frame_bits_remaining(frame_bits_remaining'length - 1) = '1' then
           frame_addr_in      <= (others => '0');
           frame_ram_en       <= '0';
           extract_frame_data <= '0';
+        else
+          frame_addr_in      <= frame_addr_in + 1;
         end if;
       end if;
 
-      if frame_ram_valid = '1' then
+      -- When calculating the final XOR'ed value, the first bit will depend on the
+      -- address. We can safely assign here and avoid extra logic levels on the FF control
+      if unsigned(frame_addr_out) = 0 then
+        xored_data(0) := frame_ram_rddata(0);
+      else
+        xored_data(0) := encoded_tdata(FRAME_RAM_DATA_WIDTH - 1) xor frame_ram_rddata(0);
+      end if;
+
+      -- Handle data coming out of the frame RAM, either by using the input data of by
+      -- calculating the actual final XOR'ed value
+      if frame_ram_ready = '1' then
         if extract_frame_data = '0' then
           frame_ram_wrdata(bit_index_int) <= axi_tdata xor frame_ram_rddata(bit_index_int);
         else
           -- Need to clear the RAM for the next frame
           frame_ram_wrdata <= (others => '0');
 
-          if unsigned(frame_addr_out) = 0 then
-            encoded_tdata <= bit_xor(frame_ram_rddata(0), frame_ram_rddata);
-          else
-            encoded_tdata <= bit_xor(encoded_tdata(encoded_tdata'length - 1), frame_ram_rddata);
-          end if;
+          -- Calculate the final XOR between output bits
+          for i in 1 to FRAME_RAM_DATA_WIDTH - 1 loop
+            xored_data(i) := frame_ram_rddata(i) xor xored_data(i - 1);
+          end loop;
+
+          -- Assign data out and decrement the bits consumed
+          frame_bits_remaining     <= frame_bits_remaining - FRAME_RAM_DATA_WIDTH;
+          encoded_tdata    <= xored_data;
+
         end if;
       end if;
 
@@ -241,32 +241,34 @@ begin
         s_tready_i <= s_ldpc_tlast and not extract_frame_data;
 
         if s_ldpc_tlast = '1' and data_completed = '1' then
-          -- We'll top up the frame with enough data to complete either the short or
+          -- We'll complete the frame with enough data to complete either the short or
           -- normal frames (16,200 or 64,800 bits respectively)
           data_completed     <= '0';
           extract_frame_data <= '1';
           frame_addr_in      <= (others => '0');
           frame_ram_en       <= '1';
-          
-          if frame_type = FECFRAME_SHORT then
-            ldpc_bit_length := to_unsigned(16_200, s_ldpc_tuser'length) - unsigned(s_ldpc_tuser);
-          else
-            ldpc_bit_length := to_unsigned(64_800, s_ldpc_tuser'length) - unsigned(s_ldpc_tuser);
-          end if;
-          -- Need to round up the division (FRAME_RAM_DATA_WIDTH - 1). Also, tuser will
-          -- have length - 1 at this point
-          ldpc_bit_length := ldpc_bit_length + FRAME_RAM_DATA_WIDTH - 1 - 2;
-          frame_addr_max  <= ldpc_bit_length(
-                               FRAME_RAM_ADDR_WIDTH + numbits(FRAME_RAM_DATA_WIDTH) - 1
-                               downto
-                               numbits(FRAME_RAM_DATA_WIDTH));
-
         end if;
       end if;
 
       -- AXI frame data control
       if s_axi_dv = '1' then
-        s_tready_i <= '0';
+        s_tready_i   <= '0';
+
+        -- Set the expected frame length. Data will passthrough and LDPC codes will be
+        -- appended to complete the appropriate n_ldpc length (either 16,200 or 64,800).
+        -- Timing-wise, the best way to do this is by setting the counter to - N + 2;
+        -- whenever it gets to 1 it will have counted N items.
+        if first_tdata = '1' then
+          if cfg_frame_type = FECFRAME_SHORT then
+            frame_bits_remaining <= to_unsigned(16_199, frame_bits_remaining'length);
+          elsif cfg_frame_type = FECFRAME_NORMAL then
+            frame_bits_remaining <= to_unsigned(64_799, frame_bits_remaining'length);
+          else
+            report "Need a valid frame size" severity Error;
+          end if;
+        else
+          frame_bits_remaining <= frame_bits_remaining - 1;
+        end if;
 
         if s_tlast = '1' then
           data_completed <= '1';
