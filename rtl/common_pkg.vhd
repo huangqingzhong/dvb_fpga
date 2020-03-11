@@ -80,10 +80,11 @@ package body common_pkg is
 
     ------------------------------------------------------------------------------------
     function mirror_bits (constant v : std_logic_vector) return std_logic_vector is
-      variable result : std_logic_vector(v'range);
+      variable result : std_logic_vector(v'length - 1 downto 0);
     begin
-      for i in v'range loop
-        result(v'length - i - 1) := v(i);
+
+      for i in 0 to v'length - 1 loop
+        result(v'length - i - 1) := v(i + v'low);
       end loop;
 
       return result;
