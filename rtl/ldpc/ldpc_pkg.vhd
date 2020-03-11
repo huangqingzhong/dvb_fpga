@@ -146,16 +146,16 @@ package body ldpc_pkg is
     for row in 0 to table_depth - 1 loop
       columns := entry_num(row);
 
-      -- report sformat("row %d has %d columns", fo(row), fo(columns));
-
       for column in 1 to columns loop
         addr      := table(row)(column);
 
-        increment := '0';
-
         if column = columns then
           increment := '1';
+        else
+          increment := '0';
         end if;
+
+        -- report sformat("row %d/%d, column %d/%d => %d, %s", fo(row), fo(table_depth - 1), fo(column), fo(columns), fo(rom_addr), fo(increment));
 
         -- Make sure addr_width is enough to represent every address
         assert to_unsigned(addr, addr_width) = addr

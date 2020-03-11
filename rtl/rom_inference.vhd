@@ -34,7 +34,7 @@ entity rom_inference is
   generic (
     DATA                : std_logic_vector_2d_t;
     RAM_INFERENCE_STYLE : string  := "auto";
-    EXTRA_OUTPUT_DELAY  : natural := 0
+    OUTPUT_DELAY  : natural := 0
   );
   port (
     -- Usual ports
@@ -42,14 +42,14 @@ entity rom_inference is
 
     -- Block specifics
     addr : in  std_logic_vector(numbits(DATA'length) - 1 downto 0);
-    dout : out std_logic_vector(numbits(DATA(DATA'low)'length) - 1 downto 0));
+    dout : out std_logic_vector(DATA(DATA'low)'length - 1 downto 0));
 end rom_inference;
 
 architecture rom_inference of rom_inference is
 
-  -- TODO: Check that this actually works
-  attribute RAM_STYLE         : string;
-  attribute RAM_STYLE of DATA : constant is RAM_INFERENCE_STYLE;
+  -- -- TODO: Check that this actually works
+  -- attribute RAM_STYLE         : string;
+  -- attribute RAM_STYLE of DATA : constant is RAM_INFERENCE_STYLE;
 
   ---------------
   -- Constants --
@@ -69,7 +69,7 @@ begin
   -------------------
   delay_u : entity work.sr_delay
   generic map (
-    DELAY_CYCLES  => EXTRA_OUTPUT_DELAY,
+    DELAY_CYCLES  => OUTPUT_DELAY,
     DATA_WIDTH    => DATA_WIDTH,
     EXTRACT_SHREG => False)
   port map (

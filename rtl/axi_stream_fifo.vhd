@@ -93,7 +93,7 @@ begin
       ADDR_WIDTH          => numbits(FIFO_DEPTH),
       DATA_WIDTH          => DATA_WIDTH + 1,
       RAM_INFERENCE_STYLE => RAM_INFERENCE_STYLE,
-      EXTRA_OUTPUT_DELAY  => 0)
+      OUTPUT_DELAY        => 1)
     port map (
       -- Port A
       clk_a     => clk,

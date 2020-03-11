@@ -39,7 +39,7 @@ entity ldpc_rom is
     ADDR_WIDTH          : natural := 8;
     DATA_WIDTH          : natural := 16;
     RAM_INFERENCE_STYLE : string  := "auto";
-    EXTRA_OUTPUT_DELAY  : natural := 0
+    OUTPUT_DELAY        : natural := 0
   );
   port (
     -- Usual ports
@@ -86,7 +86,7 @@ begin
     generic map (
       DATA                => LDPC_TABLE,
       RAM_INFERENCE_STYLE => RAM_INFERENCE_STYLE,
-      EXTRA_OUTPUT_DELAY  => 0)
+      OUTPUT_DELAY        => 0)
     port map (
       -- Usual ports
       clk  => clk,
@@ -97,7 +97,7 @@ begin
 
   q_delay_u : entity work.sr_delay
   generic map (
-    DELAY_CYCLES  => EXTRA_OUTPUT_DELAY,
+    DELAY_CYCLES  => OUTPUT_DELAY,
     DATA_WIDTH    => q'length,
     EXTRACT_SHREG => False)
   port map (

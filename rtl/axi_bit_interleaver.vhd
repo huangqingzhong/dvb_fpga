@@ -173,7 +173,7 @@ begin
         ADDR_WIDTH          => numbits(MAX_ROWS) + 1,
         DATA_WIDTH          => DATA_WIDTH,
         RAM_INFERENCE_STYLE => "auto",
-        EXTRA_OUTPUT_DELAY  => 0)
+        OUTPUT_DELAY        => 1)
       port map (
         -- Port A
         clk_a     => clk,

@@ -46,7 +46,14 @@ entity axi_ldpc_encoder is
     cfg_frame_type    : in  frame_type_t;
     cfg_code_rate     : in  code_rate_t;
 
-    -- AXI input
+    -- AXI LDPC table input
+    s_ldpc_offset     : in  std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+    s_ldpc_tuser      : in  std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+    s_ldpc_tvalid     : in  std_logic;
+    s_ldpc_tlast      : in  std_logic;
+    s_ldpc_tready     : out std_logic := '1';
+
+    -- AXI data input
     s_tvalid          : in  std_logic;
     s_tdata           : in  std_logic;
     s_tlast           : in  std_logic;
@@ -60,6 +67,19 @@ entity axi_ldpc_encoder is
 end axi_ldpc_encoder;
 
 architecture axi_ldpc_encoder of axi_ldpc_encoder is
+
+  function bit_xor ( constant start : std_logic; constant v : std_logic_vector ) return std_logic_vector is
+    variable result : std_logic_vector(v'length - 1 downto 0);
+  begin
+    -- result(0) := v(0) xor start;
+    result(0) := start;
+
+    for i in 1 to v'length - 1 loop
+      result(i) := v(i) xor result(i - 1);
+    end loop;
+
+    return result;
+  end;
 
   ---------------
   -- Constants --
@@ -80,152 +100,178 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal code_rate        : code_rate_t;
 
   signal s_axi_dv         : std_logic;
+  signal s_ldpc_dv        : std_logic;
+  signal frame_ram_valid  : std_logic;
+  signal data_completed   : std_logic := '0';
 
-  -- Interface with the LDPC table ROM
-  signal rom_addr         : unsigned(ROM_ADDR_WIDTH - 1 downto 0);
-  signal rom_data         : std_logic_vector(ROM_DATA_WIDTH - 1 downto 0);
-  signal rom_last         : std_logic;
-  signal rom_q            : unsigned(LDPC_Q_WIDTH - 1 downto 0);
-  signal rom_table_length : unsigned(ROM_LENGTH_WIDTH - 1 downto 0);
-
-  signal rom_data_sync    : std_logic_vector(ROM_DATA_WIDTH - 1 downto 0);
-  signal rom_last_sync    : std_logic;
+  -- AXI data synchronized to the frame RAM output data
+  signal axi_tdata        : std_logic;
 
   -- Interface with the frame RAM
   signal frame_ram_en     : std_logic;
-  signal frame_addr       : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
-  signal frame_ram_wrdata : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
-  signal frame_ram_rddata : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
-  signal bit_index        : unsigned(numbits(ROM_DATA_WIDTH) - 1 downto 0);
+  signal frame_addr_in    : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  signal frame_addr_max   : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
 
-  signal first_group      : std_logic;
-  signal group_bit_cnt    : unsigned(numbits(DVB_LDPC_GROUP_LENGTH) - 1 downto 0);
-  signal group_cnt        : unsigned(numbits(max(DVB_N_LDPC) / DVB_LDPC_GROUP_LENGTH) - 1 downto 0);
-  signal frame_addr_sync  : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
-  signal bit_index_sync   : unsigned(numbits(ROM_DATA_WIDTH) - 1 downto 0);
+  -- Frame RAM output
+  signal frame_addr_out   : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  -- bit_index is sync with frame_addr_out and rame_ram_rddata
+  signal bit_index        : std_logic_vector(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+  signal frame_ram_rddata : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
+
+  -- Frame RAM data loop
+  signal frame_ram_wrdata : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+
+  signal first_tdata      : std_logic;
+
+  signal extract_frame_data : std_logic := '0';
+  signal encoded_tdata    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+
+  signal dbg_addr_0       : std_logic;
 
   signal s_tready_i       : std_logic;
+  signal s_ldpc_tready_i  : std_logic;
   signal m_tvalid_i       : std_logic;
-
-
-  signal dbg_bit_cnt      : natural := 0;
+  signal bit_index_int    : natural range 0 to ROM_DATA_WIDTH - 1;
 
 begin
 
   -------------------
   -- Port mappings --
   -------------------
-  ldpc_rom_u : entity work.ldpc_rom
-    generic map (
-      LENGTH_WIDTH        => ROM_LENGTH_WIDTH,
-      ADDR_WIDTH          => ROM_ADDR_WIDTH,
-      DATA_WIDTH          => ROM_DATA_WIDTH,
-      RAM_INFERENCE_STYLE => "auto",
-      EXTRA_OUTPUT_DELAY  => 0)
-    port map (
-      -- Usual ports
-      clk        => clk,
-
-      --
-      frame_type => frame_type,
-      code_rate  => code_rate,
-
-      q          => rom_q,
-      length     => rom_table_length,
-
-      --
-      addr       => std_logic_vector(rom_addr),
-      dout       => rom_data,
-      last       => rom_last);
-
-  rom_data_delay_u : entity work.sr_delay
-    generic map (
-      DELAY_CYCLES  => 1,
-      DATA_WIDTH    => rom_data'length,
-      EXTRACT_SHREG => True)
-    port map (
-      clk   => clk,
-      clken => '1',
-      din   => rom_data,
-      dout  => rom_data_sync);
-
-  rom_last_delay_u : entity work.sr_delay
-    generic map (
-      DELAY_CYCLES  => 1,
-      DATA_WIDTH    => 1,
-      EXTRACT_SHREG => True)
-    port map (
-      clk     => clk,
-      clken   => '1',
-      din(0)  => rom_last,
-      dout(0) => rom_last_sync);
-
-  frame_ram_u : entity work.ram_context
+  frame_ram_u : entity work.pipeline_context_ram
     generic map (
       ADDR_WIDTH          => FRAME_RAM_ADDR_WIDTH,
       DATA_WIDTH          => FRAME_RAM_DATA_WIDTH,
       RAM_INFERENCE_STYLE => "bram")
     port map (
       clk         => clk,
-      en          => frame_ram_en,
-      addr        => std_logic_vector(frame_addr),
+      -- Checkout request interface
+      en_in       => frame_ram_en,
+      addr_in     => std_logic_vector(frame_addr_in),
+      -- Data checkout output
+      en_out      => frame_ram_valid,
+      addr_out    => frame_addr_out,
       context_out => frame_ram_rddata,
+      -- Updated data input
       context_in  => frame_ram_wrdata);
+
+  bit_offset_delay_u : entity work.sr_delay
+    generic map (
+      DELAY_CYCLES  => 2,
+      DATA_WIDTH    => numbits(FRAME_RAM_DATA_WIDTH),
+      EXTRACT_SHREG => True)
+    port map (
+      clk   => clk,
+      clken => '1',
+      din   => s_ldpc_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0),
+      dout  => bit_index);
 
   ------------------------------
   -- Asynchronous assignments --
   ------------------------------
   -- Values for the current word
-  frame_addr <= rom_data(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH));
-  bit_index  <= unsigned(rom_data(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0));
 
-  -- Values synchronized with data from ram_context
-  frame_addr_sync <= rom_data_sync(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH));
-  bit_index_sync  <= unsigned(rom_data_sync(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0));
+  dbg_addr_0 <= frame_ram_valid when unsigned(frame_addr_out) = 0 else '0';
 
-  first_group     <= '1' when group_cnt = 0 else '0';
+  -- Values synchronized with data from pipeline_context_ram
+  bit_index_int  <= to_integer(unsigned(bit_index));
 
   -- AXI slave specifics
-  s_axi_dv   <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
+  s_axi_dv  <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
+  s_ldpc_dv <= '1' when s_ldpc_tready_i = '1' and s_ldpc_tvalid = '1' else '0';
 
-  s_tready_i <= m_tready when rom_addr = 0 else
-                rom_last;
-
-  m_tvalid_i <= s_tvalid;
+  m_tvalid_i <= '0'; --s_tvalid;
   m_tdata    <= s_tdata;
   m_tlast    <= s_tlast;
 
   -- Assign internals
-  s_tready   <= s_tready_i;
-  m_tvalid   <= m_tvalid_i;
+  s_tready      <= '0' when rst = '1' or extract_frame_data = '1' else s_tready_i;
+  s_ldpc_tready <= '0' when rst = '1' or extract_frame_data = '1' else s_ldpc_tready_i;
+  m_tvalid      <= m_tvalid_i;
+
+  s_ldpc_tready_i <= m_tready;
 
   ---------------
   -- Processes --
   ---------------
   write_side_p : process(clk, rst)
+    variable ldpc_bit_length : unsigned(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+    variable xored_data      : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   begin
     if rst = '1' then
-      rom_addr      <= (others => '0');
-      group_cnt     <= (others => '0');
-      group_bit_cnt <= (others => '0');
-    elsif clk'event and clk = '1' then
+      s_tready_i    <= '1';
+      encoded_tdata <= (others => 'U');
+    elsif rising_edge(clk) then
 
-      if s_axi_dv = '1' or rom_addr > 0 then
-        if rom_addr < rom_table_length - 1 then
-          rom_addr  <= rom_addr + 1;
+      -- Always return the context, will change only when needed
+      frame_ram_wrdata <= frame_ram_rddata;
+
+      if extract_frame_data = '0' then
+        -- When on normal operation, extract RAM addr
+        frame_addr_in <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
+        frame_ram_en  <= s_ldpc_dv;
+      else
+        -- When extracting frame data, increment the address until
+        if frame_addr_in /= frame_addr_max then
+          frame_addr_in      <= frame_addr_in + 1;
         else
-          rom_addr  <= (others => '0');
+          frame_addr_in      <= (others => '0');
+          frame_ram_en       <= '0';
+          extract_frame_data <= '0';
         end if;
       end if;
 
-      if s_axi_dv = '1' then
-        dbg_bit_cnt <= dbg_bit_cnt + 1;
-        if group_bit_cnt < DVB_LDPC_GROUP_LENGTH - 1 then
-          group_bit_cnt <= group_bit_cnt + 1;
+      if frame_ram_valid = '1' then
+        if extract_frame_data = '0' then
+          frame_ram_wrdata(bit_index_int) <= axi_tdata xor frame_ram_rddata(bit_index_int);
         else
-          group_bit_cnt <= (others => '0');
-          group_cnt     <= group_cnt + 1;
+          -- Need to clear the RAM for the next frame
+          frame_ram_wrdata <= (others => '0');
+
+          if unsigned(frame_addr_out) = 0 then
+            encoded_tdata <= bit_xor(frame_ram_rddata(0), frame_ram_rddata);
+          else
+            encoded_tdata <= bit_xor(encoded_tdata(encoded_tdata'length - 1), frame_ram_rddata);
+          end if;
         end if;
+      end if;
+
+      -- AXI LDPC table control
+      if s_ldpc_dv = '1' then
+        s_tready_i <= s_ldpc_tlast and not extract_frame_data;
+
+        if s_ldpc_tlast = '1' and data_completed = '1' then
+          -- We'll top up the frame with enough data to complete either the short or
+          -- normal frames (16,200 or 64,800 bits respectively)
+          data_completed     <= '0';
+          extract_frame_data <= '1';
+          frame_addr_in      <= (others => '0');
+          frame_ram_en       <= '1';
+          
+          if frame_type = FECFRAME_SHORT then
+            ldpc_bit_length := to_unsigned(16_200, s_ldpc_tuser'length) - unsigned(s_ldpc_tuser);
+          else
+            ldpc_bit_length := to_unsigned(64_800, s_ldpc_tuser'length) - unsigned(s_ldpc_tuser);
+          end if;
+          -- Need to round up the division (FRAME_RAM_DATA_WIDTH - 1). Also, tuser will
+          -- have length - 1 at this point
+          ldpc_bit_length := ldpc_bit_length + FRAME_RAM_DATA_WIDTH - 1 - 2;
+          frame_addr_max  <= ldpc_bit_length(
+                               FRAME_RAM_ADDR_WIDTH + numbits(FRAME_RAM_DATA_WIDTH) - 1
+                               downto
+                               numbits(FRAME_RAM_DATA_WIDTH));
+
+        end if;
+      end if;
+
+      -- AXI frame data control
+      if s_axi_dv = '1' then
+        s_tready_i <= '0';
+
+        if s_tlast = '1' then
+          data_completed <= '1';
+        end if;
+
       end if;
 
     end if;
@@ -234,27 +280,31 @@ begin
   -- The config ports are valid at the first word of the frame, but we must not rely on
   -- the user keeping it unchanged. Hide this on a block to leave the core code a bit
   -- cleaner
-  config_sample_block : block
+  config_sample_block : block -- {{
     signal constellation_ff : constellation_t;
     signal frame_type_ff    : frame_type_t;
     signal code_rate_ff     : code_rate_t;
-    signal first_word       : std_logic;
+    signal s_tdata_reg      : std_logic;
   begin
-
-    constellation <= cfg_constellation when first_word = '1' else constellation_ff;
-    frame_type    <= cfg_frame_type when first_word = '1' else frame_type_ff;
-    code_rate     <= cfg_code_rate when first_word = '1' else code_rate_ff;
 
     process(clk, rst)
     begin
       if rst = '1' then
-        first_word  <= '1';
+        first_tdata  <= '1';
+        axi_tdata    <= 'U'; -- We don't want a mux with rst here
       elsif rising_edge(clk) then
+        axi_tdata     <= s_tdata_reg;
+        constellation <= constellation_ff;
+        frame_type    <= frame_type_ff;
+        code_rate     <= code_rate_ff;
+
+
         if s_axi_dv = '1' then
-          first_word <= s_tlast;
+          first_tdata <= s_tlast;
+          s_tdata_reg <= s_tdata;
 
           -- Sample the BCH code used on the first word
-          if first_word = '1' then
+          if first_tdata = '1' then
             constellation_ff <= cfg_constellation;
             frame_type_ff    <= cfg_frame_type;
             code_rate_ff     <= cfg_code_rate;
@@ -264,6 +314,8 @@ begin
 
       end if;
     end process;
-  end block config_sample_block;
+  end block config_sample_block; -- }}
 
 end axi_ldpc_encoder;
+
+-- vim: set foldmethod=marker foldmarker=--\ {{,--\ }} :

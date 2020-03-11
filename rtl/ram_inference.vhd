@@ -33,7 +33,7 @@ entity ram_inference is
     ADDR_WIDTH          : positive := 16;
     DATA_WIDTH          : positive := 16;
     RAM_INFERENCE_STYLE : string   := "auto";
-    EXTRA_OUTPUT_DELAY  : natural  := 0);
+    OUTPUT_DELAY        : natural  := 1);
   port (
     -- Port A
     clk_a     : in  std_logic;
@@ -60,7 +60,7 @@ architecture ram_inference of ram_inference is
   -------------
   -- Signals --
   -------------
-  signal ram        : data_array_t(2**ADDR_WIDTH - 1 downto 0);
+  signal ram        : data_array_t(2**ADDR_WIDTH - 1 downto 0) := (others => (others => '0'));
   signal rddata_a_i : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal rddata_b_i : std_logic_vector(DATA_WIDTH - 1 downto 0);
 
@@ -80,7 +80,7 @@ begin
   -------------------
   rddata_a_delay : entity work.sr_delay
     generic map (
-      DELAY_CYCLES => EXTRA_OUTPUT_DELAY,
+      DELAY_CYCLES => OUTPUT_DELAY,
       DATA_WIDTH   => DATA_WIDTH)
     port map (
       clk     => clk_a,
@@ -91,7 +91,7 @@ begin
 
   rddata_b_delay : entity work.sr_delay
     generic map (
-      DELAY_CYCLES => EXTRA_OUTPUT_DELAY,
+      DELAY_CYCLES => OUTPUT_DELAY,
       DATA_WIDTH   => DATA_WIDTH)
     port map (
       clk     => clk_b,
@@ -100,28 +100,21 @@ begin
       din     => rddata_b_i,
       dout    => rddata_b);
 
+  rddata_a_i <= ram(to_integer(unsigned(addr_a)));
+  rddata_b_i <= ram(to_integer(unsigned(addr_b)));
+
   ---------------
   -- Processes --
   ---------------
   port_a : process(clk_a)
   begin
-      if clk_a'event and clk_a = '1' then
-          if clken_a = '1' then
-              if wren_a = '1' then
-                  ram(to_integer(unsigned(addr_a))) <= wrdata_a;
-              end if;
-              rddata_a_i <= ram(to_integer(unsigned(addr_a)));
-          end if;
+    if clk_a'event and clk_a = '1' then
+      if clken_a = '1' then
+        if wren_a = '1' then
+          ram(to_integer(unsigned(addr_a))) <= wrdata_a;
+        end if;
       end if;
-  end process;
-
-  port_b : process(clk_b)
-  begin
-      if clk_b'event and clk_b = '1' then
-          if clken_b = '1' then
-              rddata_b_i <= ram(to_integer(unsigned(addr_b)));
-          end if;
-      end if;
+    end if;
   end process;
 
 end ram_inference;
