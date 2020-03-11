@@ -261,12 +261,28 @@ def main():
             name=config.name,
             generics=dict(
                 test_cfg=config.getTestConfig(
-                    input_file_path="bch_encoder_input.bin",
-                    reference_file_path="ldpc_encoder_input.bin",
+                    input_file_path="ldpc_encoder_input.bin",
+                    reference_file_path="bch_encoder_input.bin",
                 ),
                 NUMBER_OF_TEST_FRAMES=1,
             ),
         )
+
+    #  for config in _getAllConfigs(
+    #      constellations=(ConstellationType.MOD_8PSK,),
+    #      code_rates={CodeRate.C2_3,},
+    #      frame_lengths={FrameLength.FECFRAME_NORMAL,},
+    #  ):
+    #      cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
+    #          name=config.name,
+    #          generics=dict(
+    #              test_cfg=config.getTestConfig(
+    #                  input_file_path="bch_encoder_input.bin",
+    #                  reference_file_path="ldpc_encoder_input.bin",
+    #              ),
+    #              NUMBER_OF_TEST_FRAMES=1,
+    #          ),
+    #      )
 
     for data_width in (1, 8):
         all_configs = []
