@@ -26,6 +26,7 @@ use ieee.math_real.all;
 package common_pkg is
 
   type std_logic_vector_2d_t is array (natural range <>) of std_logic_vector;
+  subtype byte_array_t is std_logic_vector_2d_t(open)(7 downto 0);
 
   -- Calculates the number of bits required to represent a given value
   function numbits (constant v : natural) return natural;

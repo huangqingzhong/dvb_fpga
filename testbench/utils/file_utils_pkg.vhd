@@ -31,6 +31,7 @@ context vunit_lib.com_context;
 library str_format;
 use str_format.str_format_pkg.all;
 
+use work.common_pkg.all;
 use work.testbench_utils_pkg.all;
 
 package file_utils_pkg is
@@ -38,7 +39,7 @@ package file_utils_pkg is
   -----------
   -- Types --
   -----------
-  type std_logic_vector_array is array (natural range <>) of std_logic_vector;
+  -- type std_logic_vector_2d_t is array (natural range <>) of std_logic_vector;
 
   type ratio_t is record
     first  : positive;
@@ -257,9 +258,9 @@ package body file_utils_pkg is
 
   impure function decode_std_logic_vector_array(
     constant s          : string;
-    constant data_width : integer) return std_logic_vector_array is
+    constant data_width : integer) return std_logic_vector_2d_t is
     variable items      : lines_t := split(s, "|");
-    variable data       : std_logic_vector_array(0 to items'length - 1)(data_width - 1 downto 0);
+    variable data       : std_logic_vector_2d_t(0 to items'length - 1)(data_width - 1 downto 0);
   begin
     debug("decoding => '" & s & "'");
     for i in items'range loop
