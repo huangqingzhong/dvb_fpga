@@ -36,13 +36,17 @@ use osvvm.RandomPkg.all;
 library str_format;
 use str_format.str_format_pkg.all;
 
-use work.common_pkg.all;
+library fpga_cores;
+use fpga_cores.common_pkg.all;
+use fpga_cores.file_utils_pkg.all;
+use fpga_cores.testbench_utils_pkg.all;
 
+use work.dvb_sim_utils_pkg.all;
 use work.dvb_utils_pkg.all;
-use work.file_utils_pkg.all;
 use work.ldpc_pkg.all;
 use work.ldpc_tables_pkg.all;
-use work.testbench_utils_pkg.all;
+
+library fpga_cores;
 
 entity axi_ldpc_encoder_tb is
   generic (
@@ -151,7 +155,7 @@ begin
 
 
   -- AXI file read
-  axi_file_reader_u : entity work.axi_file_reader
+  axi_file_reader_u : entity fpga_cores.axi_file_reader
     generic map (
       READER_NAME => FILE_READER_NAME,
       DATA_WIDTH  => DATA_WIDTH)
@@ -169,7 +173,7 @@ begin
       m_tvalid           => m_tvalid,
       m_tlast            => m_tlast);
 
-  axi_file_compare_u : entity work.axi_file_compare
+  axi_file_compare_u : entity fpga_cores.axi_file_compare
     generic map (
       READER_NAME     => FILE_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
@@ -428,7 +432,7 @@ begin
       ------------------------------------------------------------------
       procedure write_line(
         constant q         : natural;
-        constant L         : work.common_pkg.integer_array_t) is
+        constant L         : fpga_cores.common_pkg.integer_array_t) is
         constant rows      : natural := L(0);
       begin
         -- info(sformat("Line has %d rows", fo(rows)));

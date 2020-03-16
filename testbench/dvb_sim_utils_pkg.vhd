@@ -30,10 +30,12 @@ context vunit_lib.com_context;
 library str_format;
 use str_format.str_format_pkg.all;
 
-use work.common_pkg.all;
+library fpga_cores;
+use fpga_cores.common_pkg.all;
+
 use work.dvb_utils_pkg.all;
 
-package testbench_utils_pkg is
+package dvb_sim_utils_pkg is
 
   type file_pair_t is record
     input : string(1 to 512);
@@ -69,12 +71,9 @@ package testbench_utils_pkg is
   impure function pop(msg : msg_t) return frame_type_t;
   impure function pop(msg : msg_t) return code_rate_t;
 
-  procedure push(msg : msg_t; value : std_logic_vector_2d_t);
-  impure function pop(msg : msg_t) return std_logic_vector_2d_t;
+end dvb_sim_utils_pkg;
 
-end testbench_utils_pkg;
-
-package body testbench_utils_pkg is
+package body dvb_sim_utils_pkg is
 
   procedure push(msg : msg_t; value : constellation_t) is
   begin
@@ -216,33 +215,5 @@ package body testbench_utils_pkg is
       & "input=" & quote(config.input) & ", "
       & "reference=" & quote(config.reference) & ")";
   end function to_string;
-
-  procedure push(msg : msg_t; value : std_logic_vector_2d_t) is
-  begin
-    push(msg, value'low);
-    push(msg, value'high);
-
-    for i in value'low to value'high loop
-      push(msg, value(i));
-    end loop;
-
-  end;
-
-  impure function pop(msg : msg_t) return std_logic_vector_2d_t is
-    constant low    : integer := pop(msg);
-    constant high   : integer := pop(msg);
-    constant first  : std_logic_vector := pop(msg);
-    constant width  : integer := first'length;
-    variable result : std_logic_vector_2d_t(low to high)(width - 1 downto 0);
-  begin
-
-    result(0) := first;
-
-    for i in low to high - 1 loop
-      result(i + 1) := pop(msg);
-    end loop;
-
-    return result;
-  end;
 
 end package body;

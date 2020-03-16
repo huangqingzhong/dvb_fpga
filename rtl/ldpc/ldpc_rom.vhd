@@ -25,7 +25,9 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-use work.common_pkg.all;
+library fpga_cores;
+use fpga_cores.common_pkg.all;
+
 use work.dvb_utils_pkg.all;
 use work.ldpc_pkg.all;
 use work.ldpc_tables_pkg.all;
@@ -82,7 +84,7 @@ begin
   -------------------
   -- Port mappings --
   -------------------
-  table_u : entity work.rom_inference
+  table_u : entity fpga_cores.rom_inference
     generic map (
       DATA                => LDPC_TABLE,
       RAM_INFERENCE_STYLE => RAM_INFERENCE_STYLE,
@@ -95,7 +97,7 @@ begin
       addr => addr(ROM_ADDR_WIDTH - 1 downto 0),
       dout => dout_i);
 
-  q_delay_u : entity work.sr_delay
+  q_delay_u : entity fpga_cores.sr_delay
   generic map (
     DELAY_CYCLES  => OUTPUT_DELAY,
     DATA_WIDTH    => q'length,

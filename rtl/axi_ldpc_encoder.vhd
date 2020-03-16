@@ -25,7 +25,9 @@ library	ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
-use work.common_pkg.all;
+library fpga_cores;
+use fpga_cores.common_pkg.all;
+
 use work.dvb_utils_pkg.all;
 use work.ldpc_pkg.all;
 
@@ -121,7 +123,7 @@ begin
   -------------------
   -- Port mappings --
   -------------------
-  frame_ram_u : entity work.pipeline_context_ram
+  frame_ram_u : entity fpga_cores.pipeline_context_ram
     generic map (
       ADDR_WIDTH          => FRAME_RAM_ADDR_WIDTH,
       DATA_WIDTH          => FRAME_RAM_DATA_WIDTH,
@@ -138,7 +140,7 @@ begin
       -- Updated data input
       context_in  => frame_ram_wrdata);
 
-  bit_offset_delay_u : entity work.sr_delay
+  bit_offset_delay_u : entity fpga_cores.sr_delay
     generic map (
       DELAY_CYCLES  => 2,
       DATA_WIDTH    => numbits(FRAME_RAM_DATA_WIDTH),

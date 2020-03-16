@@ -36,9 +36,12 @@ use osvvm.RandomPkg.all;
 library str_format;
 use str_format.str_format_pkg.all;
 
+library fpga_cores;
+use fpga_cores.testbench_utils_pkg.all;
+use fpga_cores.file_utils_pkg.all;
+
 use work.dvb_utils_pkg.all;
-use work.testbench_utils_pkg.all;
-use work.file_utils_pkg.all;
+use work.dvb_sim_utils_pkg.all;
 
 entity axi_bch_encoder_tb is
   generic (
@@ -123,7 +126,7 @@ begin
 
 
   -- AXI file read
-  axi_file_reader_u : entity work.axi_file_reader
+  axi_file_reader_u : entity fpga_cores.axi_file_reader
     generic map (
       READER_NAME      => FILE_READER_NAME,
       DATA_WIDTH       => DATA_WIDTH)
@@ -141,7 +144,7 @@ begin
       m_tvalid           => m_tvalid,
       m_tlast            => m_tlast);
 
-  axi_file_compare_u : entity work.axi_file_compare
+  axi_file_compare_u : entity fpga_cores.axi_file_compare
     generic map (
       READER_NAME     => FILE_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
