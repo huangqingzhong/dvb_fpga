@@ -68,9 +68,9 @@ architecture ldpc_rom of ldpc_rom is
   -- Fixed for now. Add 1 because the generic DATA_WIDTH defines the port width but the
   -- ROM also has a bit to identify the last bit of word (needed because all table
   -- contents are stacked).
-  constant LDPC_TABLE     : std_logic_vector_2d_t := ldpc_table_to_rom(DVB_16200_S2_C8_T2_B6 , DATA_WIDTH + 1);
+  -- constant LDPC_TABLE     : std_logic_vector_2d_t := ldpc_table_to_rom(DVB_16200_S2_C8_T2_B6 , DATA_WIDTH + 1);
 
-  constant ROM_ADDR_WIDTH : natural := numbits(LDPC_TABLE'length);
+  -- constant ROM_ADDR_WIDTH : natural := numbits(LDPC_TABLE'length);
 
   -------------
   -- Signals --
@@ -84,18 +84,18 @@ begin
   -------------------
   -- Port mappings --
   -------------------
-  table_u : entity fpga_cores.rom_inference
-    generic map (
-      DATA                => LDPC_TABLE,
-      RAM_INFERENCE_STYLE => RAM_INFERENCE_STYLE,
-      OUTPUT_DELAY        => 0)
-    port map (
-      -- Usual ports
-      clk  => clk,
+  -- table_u : entity fpga_cores.rom_inference
+  --   generic map (
+  --     DATA                => LDPC_TABLE,
+  --     RAM_INFERENCE_STYLE => RAM_INFERENCE_STYLE,
+  --     OUTPUT_DELAY        => 0)
+  --   port map (
+  --     -- Usual ports
+  --     clk  => clk,
 
-      -- Block specifics
-      addr => addr(ROM_ADDR_WIDTH - 1 downto 0),
-      dout => dout_i);
+  --     -- Block specifics
+  --     addr => addr(ROM_ADDR_WIDTH - 1 downto 0),
+  --     dout => dout_i);
 
   q_delay_u : entity fpga_cores.sr_delay
   generic map (
@@ -115,7 +115,7 @@ begin
   q_in   <= get_ldpc_q(frame_type, code_rate);
   q      <= unsigned(q_out);
 
-  length <= to_unsigned(LDPC_TABLE'length, length'length);
+  -- length <= to_unsigned(LDPC_TABLE'length, length'length);
 
   -- There will be a mux here, mimic the effect of chosing an invalid config
   dout <= dout_i(DATA_WIDTH - 1 downto 0) when frame_type /= not_set and code_rate /= not_set else

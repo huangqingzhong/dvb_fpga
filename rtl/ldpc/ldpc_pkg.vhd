@@ -43,10 +43,10 @@ package ldpc_pkg is
     constant frame_type : frame_type_t;
     constant code_rate : code_rate_t) return natural;
 
-  impure function ldpc_table_to_rom (
-    constant table      : integer_2d_array_t;
-    constant data_width : natural
-  ) return std_logic_vector_2d_t;
+  -- impure function ldpc_table_to_rom (
+  --   constant table      : integer_2d_array_t;
+  --   constant data_width : natural
+  -- ) return std_logic_vector_2d_t;
 
 end ldpc_pkg;
 
@@ -113,65 +113,65 @@ package body ldpc_pkg is
 
   constant LDPC_Q_ROM : ldpc_q_array_t := get_ldpc_q_rom;
 
-  impure function ldpc_table_to_rom (
-    constant table      : integer_2d_array_t;
-    constant data_width : natural
-  ) return std_logic_vector_2d_t is
-    constant table_depth : natural := table'length;
+  -- impure function ldpc_table_to_rom (
+  --   constant table      : integer_2d_array_t;
+  --   constant data_width : natural
+  -- ) return std_logic_vector_2d_t is
+  --   constant table_depth : natural := table'length;
 
-    function get_number_of_entries return integer_array_t is
-      variable items : integer_array_t(table_depth - 1 downto 0);
-    begin
-      for i in 0 to table_depth - 1 loop
-        items(i) := table(i)(0);
-      end loop;
-      return items;
-    end;
+  --   function get_number_of_entries return integer_array_t is
+  --     variable items : integer_array_t(table_depth - 1 downto 0);
+  --   begin
+  --     for i in 0 to table_depth - 1 loop
+  --       items(i) := table(i)(0);
+  --     end loop;
+  --     return items;
+  --   end;
 
-    constant entry_num       : integer_array_t := get_number_of_entries;
-    constant rom_depth       : natural := sum(entry_num);
-    variable result          : std_logic_vector_2d_t(rom_depth - 1 downto 0)(data_width - 1 downto 0);
+  --   constant entry_num       : integer_array_t := get_number_of_entries;
+  --   constant rom_depth       : natural := sum(entry_num);
+  --   variable result          : std_logic_vector_2d_t(rom_depth - 1 downto 0)(data_width - 1 downto 0);
 
-    constant addr_width      : natural := data_width - 1;
+  --   constant addr_width      : natural := data_width - 1;
 
-    variable addr            : natural;
-    variable increment       : std_logic := '0';
+  --   variable addr            : natural;
+  --   variable increment       : std_logic := '0';
 
-    variable rom_addr        : natural := 0;
-    variable rom_data        : std_logic_vector(data_width - 1 downto 0);
-    variable columns         : natural;
-  begin
+  --   variable rom_addr        : natural := 0;
+  --   variable rom_data        : std_logic_vector(data_width - 1 downto 0);
+  --   variable columns         : natural;
+  -- begin
 
-    -- report cr & "entry_num=" & to_string(sum(entry_num)) & ", " & to_string(table_depth)
-    -- severity error;
+  --   -- report cr & "entry_num=" & to_string(sum(entry_num)) & ", " & to_string(table_depth)
+  --   -- severity error;
 
-    for row in 0 to table_depth - 1 loop
-      columns := entry_num(row);
+  --   for row in 0 to table_depth - 1 loop
+  --     columns := entry_num(row);
 
-      for column in 1 to columns loop
-        addr      := table(row)(column);
+  --     for column in 1 to columns loop
+  --       addr      := table(row)(column);
 
-        if column = columns then
-          increment := '1';
-        else
-          increment := '0';
-        end if;
+  --       if column = columns then
+  --         increment := '1';
+  --       else
+  --         increment := '0';
+  --       end if;
 
-        -- report sformat("row %d/%d, column %d/%d => %d, %s", fo(row), fo(table_depth - 1), fo(column), fo(columns), fo(rom_addr), fo(increment));
+  --       -- report sformat("row %d/%d, column %d/%d => %d, %s", fo(row), fo(table_depth - 1), fo(column), fo(columns), fo(rom_addr), fo(increment));
 
-        -- Make sure addr_width is enough to represent every address
-        assert to_unsigned(addr, addr_width) = addr
-          report "DATA_WIDTH of " & to_string(data_width) & " leaves only " & to_string(addr_width) & " bits for address, which  is too small to represent " & to_string(addr)
-          severity Failure;
+  --       -- Make sure addr_width is enough to represent every address
+  --       assert to_unsigned(addr, addr_width) = addr
+  --         report "DATA_WIDTH of " & to_string(data_width) & " leaves only " & to_string(addr_width) & " bits for address, which  is too small to represent " & to_string(addr)
+  --         severity Failure;
 
-        rom_data := increment & std_logic_vector(to_unsigned(addr, addr_width));
+  --       rom_data := increment & std_logic_vector(to_unsigned(addr, addr_width));
 
-        result(rom_addr) := rom_data;
-        rom_addr         := rom_addr + 1;
-      end loop;
-    end loop;
+  --       result(rom_addr) := rom_data;
+  --       rom_addr         := rom_addr + 1;
+  --     end loop;
+  --   end loop;
     
-    return result;
-  end;
+  --   return result;
+  -- end;
 
 end package body;
