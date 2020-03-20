@@ -288,7 +288,7 @@ begin
       frame_ram_wrdata <= to_01(frame_ram_rddata);
 
       -- Frame RAM addressing depends if we're calculating the codes or extracting them
-      if (extract_frame_data = '1' or frame_ram_last = '1') then
+      ldpc_append_addr_ctrl : if (extract_frame_data = '1' or frame_ram_last = '1') then
         -- Respect AXI master adapter
         if encoded_data_wr_full = '0' then
 
@@ -304,7 +304,7 @@ begin
             frame_addr_in      <= frame_addr_in + 1;
           end if;
         end if;
-      end if;
+      end if ldpc_append_addr_ctrl;
 
       -- When calculating the final XOR'ed value, the first bit will depend on the
       -- address. We can safely assign here and avoid extra logic levels on the FF control
@@ -316,8 +316,9 @@ begin
 
       -- Handle data coming out of the frame RAM, either by using the input data of by
       -- calculating the actual final XOR'ed value
-      if frame_ram_ready = '1' and extract_frame_data = '0' then
-        frame_ram_wrdata(frame_bit_index_i) <= axi_in_tdata_sampled xor to_01(frame_ram_rddata(frame_bit_index_i));
+      handle_frame_ram_data : if frame_ram_ready = '1' and extract_frame_data = '0' then
+        frame_ram_wrdata(frame_bit_index_i) <= axi_in_tdata_sampled 
+                                               xor to_01(frame_ram_rddata(frame_bit_index_i));
       elsif frame_ram_ready = '1' and extract_frame_data = '1' then
         -- Need to clear the RAM for the next frame
         frame_ram_wrdata <= (others => '0');
@@ -333,14 +334,15 @@ begin
         encoded_data_wr_en   <= '1';
       elsif frame_ram_ready = '0' and extract_frame_data = '1' then
         frame_ram_wrdata <= (others => '0');
-      end if;
+      end if handle_frame_ram_data;
 
       -- AXI LDPC table control
       if ldpc_dv = '1' then
         ldpc_offset     <= s_ldpc_offset;
         frame_addr_in   <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
-        has_ldpc_data   := True;
         code_proc_ready <= '0';
+
+        has_ldpc_data   := True;
 
         if s_ldpc_tlast = '1' and extract_frame_data = '0' then
           axi_in_tready_p <= '1';
@@ -386,7 +388,6 @@ begin
       if has_axi_data and has_ldpc_data then
         frame_ram_en    <= '1';
         frame_bit_index <= ldpc_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
-
       end if;
 
       if has_axi_data then
@@ -401,12 +402,6 @@ begin
         end if;
       end if;
 
-      -- if has_ldpc_data and has_axi_data then
-      --   has_axi_data    := False;
-      --   has_ldpc_data   := False;
-      --   axi_in_tready_p <= '1';
-      --   code_proc_ready <= '1';
-
     end if;
   end process;
 
@@ -414,6 +409,7 @@ begin
   -- the user keeping it unchanged. Hide this on a block to leave the core code a bit
   -- cleaner
   config_sample_block  : block -- {{
+    signal tdata : std_logic;
   begin
 
     process(clk, rst)
@@ -421,17 +417,21 @@ begin
       if rst = '1' then
         axi_in_first_word    <= '1';
         code_first_word      <= '1';
-        axi_in_tdata_sampled <= 'U'; -- We don't want a mux with rst here
+        -- We don't want things muxed with rst here
+        axi_in_tdata_sampled <= 'U';
+        tdata                <= 'U';
       elsif rising_edge(clk) then
+
+        axi_in_tdata_sampled <= tdata;
 
         if axi_in_tready = '1' then
           axi_in_has_data <= '0';
         end if;
 
         if axi_in_dv = '1' then
-          axi_in_has_data      <= '1';
-          axi_in_first_word    <= axi_in_tlast;
-          axi_in_tdata_sampled <= axi_in_tdata;
+          axi_in_has_data   <= '1';
+          axi_in_first_word <= axi_in_tlast;
+          tdata             <= axi_in_tdata;
         end if;
 
         if ldpc_dv = '1' then
