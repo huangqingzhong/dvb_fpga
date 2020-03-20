@@ -46,21 +46,21 @@ entity axi_ldpc_encoder is
     cfg_code_rate     : in  code_rate_t;
 
     -- AXI LDPC table input
+    s_ldpc_tvalid     : in  std_logic;
+    s_ldpc_tready     : out std_logic := '1';
     s_ldpc_offset     : in  std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
     s_ldpc_tuser      : in  std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-    s_ldpc_tvalid     : in  std_logic;
     s_ldpc_tlast      : in  std_logic;
-    s_ldpc_tready     : out std_logic := '1';
 
     -- AXI data input
     s_tvalid          : in  std_logic;
+    s_tready          : out std_logic;
     s_tdata           : in  std_logic_vector(DATA_WIDTH - 1 downto 0);
     s_tlast           : in  std_logic;
-    s_tready          : out std_logic;
 
     -- AXI output
-    m_tready          : in  std_logic;
     m_tvalid          : out std_logic;
+    m_tready          : in  std_logic;
     m_tlast           : out std_logic;
     m_tdata           : out std_logic_vector(DATA_WIDTH - 1 downto 0));
 end axi_ldpc_encoder;
@@ -88,6 +88,7 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
 
   signal axi_in_dv            : std_logic;
   signal axi_in_first_word    : std_logic;
+  signal axi_in_has_data      : std_logic;
   signal axi_in_tready_p      : std_logic;
 
   signal axi_in_constellation : constellation_t;
@@ -98,7 +99,10 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   -- AXI data synchronized to the frame RAM output data
   signal axi_in_tdata_sampled : std_logic;
 
-  signal s_ldpc_dv            : std_logic;
+  signal ldpc_dv              : std_logic;
+  signal s_ldpc_tready_i      : std_logic;
+  signal ldpc_offset          : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+
   signal frame_ram_ready      : std_logic;
   signal frame_bits_remaining : unsigned(numbits(max(DVB_N_LDPC)) - 1 downto 0);
 
@@ -108,8 +112,8 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
 
   -- Frame RAM output
   signal frame_addr_out       : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
-  -- bit_index is sync with frame_addr_out and rame_ram_rddata
-  signal bit_index            : std_logic_vector(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+  -- frame_bit_index is sync with frame_addr_out and rame_ram_rddata
+  signal frame_bit_index      : std_logic_vector(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
   signal frame_ram_rddata     : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
 
   -- Frame RAM data loop
@@ -118,9 +122,8 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal frame_ram_last       : std_logic := '0';
   signal extract_frame_data   : std_logic := '0';
 
-  signal s_ldpc_tready_i      : std_logic;
-  signal m_tvalid_i           : std_logic;
-  signal bit_index_int        : natural range 0 to ROM_DATA_WIDTH - 1;
+  signal code_proc_ready      : std_logic;
+  signal code_first_word      : std_logic;
 
   signal encoded_data_wr_en   : std_logic;
   signal encoded_data_wr_full : std_logic;
@@ -131,6 +134,10 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal axi_out_tdata        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   signal axi_out_tvalid       : std_logic;
   signal axi_out_tlast        : std_logic;
+
+  signal m_tvalid_i           : std_logic;
+  signal frame_bit_index_i    : natural range 0 to ROM_DATA_WIDTH - 1;
+
 
 begin
 
@@ -163,7 +170,7 @@ begin
         rst        => rst,
         -- AXI stream input
         s_tready   => s_tready,
-        s_tdata    => s_tdata,
+        s_tdata    => mirror_bits(s_tdata), -- width converter is little endian, we need big endian
         s_tkeep    => (others => '0'),
         s_tid      => s_tid,
         s_tvalid   => s_tvalid,
@@ -179,9 +186,9 @@ begin
 
   frame_ram_u : entity fpga_cores.pipeline_context_ram
     generic map (
-      ADDR_WIDTH          => FRAME_RAM_ADDR_WIDTH,
-      DATA_WIDTH          => FRAME_RAM_DATA_WIDTH,
-      RAM_INFERENCE_STYLE => "bram")
+      ADDR_WIDTH => FRAME_RAM_ADDR_WIDTH,
+      DATA_WIDTH => FRAME_RAM_DATA_WIDTH,
+      RAM_TYPE   => "bram")
     port map (
       clk         => clk,
       -- Checkout request interface
@@ -193,17 +200,6 @@ begin
       context_out => frame_ram_rddata,
       -- Updated data input
       context_in  => frame_ram_wrdata);
-
-  bit_offset_delay_u : entity fpga_cores.sr_delay
-    generic map (
-      DELAY_CYCLES  => 2,
-      DATA_WIDTH    => numbits(FRAME_RAM_DATA_WIDTH),
-      EXTRACT_SHREG => True)
-    port map (
-      clk   => clk,
-      clken => '1',
-      din   => s_ldpc_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0),
-      dout  => bit_index);
 
   -- Can't stop reading from the frame RAM instantly, allow some slack
   frame_ram_adapter_u : entity fpga_cores.axi_stream_master_adapter
@@ -254,32 +250,37 @@ begin
   -- Asynchronous assignments --
   ------------------------------
   -- Values synchronized with data from pipeline_context_ram
-  bit_index_int   <= to_integer(unsigned(bit_index));
-  s_ldpc_tready_i <= m_tready;
+  frame_bit_index_i <= to_integer(unsigned(frame_bit_index));
+  s_ldpc_tready_i   <= '0' when rst = '1' or extract_frame_data = '1' else code_proc_ready;
+
 
   -- AXI slave specifics
   axi_in_dv     <= '1' when axi_in_tready = '1' and axi_in_tvalid = '1' else '0';
-  s_ldpc_dv     <= '1' when s_ldpc_tready_i = '1' and s_ldpc_tvalid = '1' else '0';
+  ldpc_dv       <= '1' when s_ldpc_tready_i = '1' and s_ldpc_tvalid = '1' else '0';
   axi_in_tready <= '0' when rst = '1' or frame_ram_last = '1' else axi_in_tready_p;
 
   -- Assign internals
-  s_ldpc_tready        <= '0' when rst = '1' or extract_frame_data = '1' else s_ldpc_tready_i;
-  m_tvalid             <= m_tvalid_i;
+  s_ldpc_tready <= s_ldpc_tready_i;
+  m_tvalid      <= m_tvalid_i;
 
   ---------------
   -- Processes --
   ---------------
   write_side_p : process(clk, rst)
-    variable xored_data : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+    variable xored_data    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+    variable has_ldpc_data : boolean := False;
+    variable has_axi_data  : boolean := False;
   begin
     if rst = '1' then
       axi_in_tready_p      <= '1';
+      code_proc_ready      <= '1';
       frame_bits_remaining <= (others => '0');
 
       encoded_data_wr_data <= (others => 'U');
       encoded_data_wr_en   <= '0';
     elsif rising_edge(clk) then
 
+      frame_ram_en       <= '0';
       encoded_data_wr_en <= '0';
       extract_frame_data <= frame_ram_last;
 
@@ -287,13 +288,7 @@ begin
       frame_ram_wrdata <= to_01(frame_ram_rddata);
 
       -- Frame RAM addressing depends if we're calculating the codes or extracting them
-      if extract_frame_data = '0' and frame_ram_last = '0' then
-        -- When on normal operation, extract RAM addr
-        frame_addr_in <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
-        frame_ram_en  <= s_ldpc_dv;
-      else
-        frame_ram_en  <= '0';
-
+      if (extract_frame_data = '1' or frame_ram_last = '1') then
         -- Respect AXI master adapter
         if encoded_data_wr_full = '0' then
 
@@ -322,7 +317,7 @@ begin
       -- Handle data coming out of the frame RAM, either by using the input data of by
       -- calculating the actual final XOR'ed value
       if frame_ram_ready = '1' and extract_frame_data = '0' then
-        frame_ram_wrdata(bit_index_int) <= axi_in_tdata_sampled xor to_01(frame_ram_rddata(bit_index_int));
+        frame_ram_wrdata(frame_bit_index_i) <= axi_in_tdata_sampled xor to_01(frame_ram_rddata(frame_bit_index_i));
       elsif frame_ram_ready = '1' and extract_frame_data = '1' then
         -- Need to clear the RAM for the next frame
         frame_ram_wrdata <= (others => '0');
@@ -341,8 +336,12 @@ begin
       end if;
 
       -- AXI LDPC table control
-      if s_ldpc_dv = '1' then
-        -- axi_in_tready_p <= '0';
+      if ldpc_dv = '1' then
+        ldpc_offset     <= s_ldpc_offset;
+        frame_addr_in   <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
+        has_ldpc_data   := True;
+        code_proc_ready <= '0';
+
         if s_ldpc_tlast = '1' and extract_frame_data = '0' then
           axi_in_tready_p <= '1';
         end if;
@@ -350,16 +349,16 @@ begin
         if s_ldpc_tlast = '1' and axi_in_completed = '1' then
           -- We'll complete the frame with enough data to complete either the short or
           -- normal frames (16,200 or 64,800 bits respectively)
-          axi_in_completed     <= '0';
-          frame_ram_last     <= '1';
-          frame_addr_in      <= (others => '0');
-          frame_ram_en       <= '1';
+          axi_in_completed <= '0';
+          frame_ram_last   <= '1';
+          frame_addr_in    <= (others => '0');
         end if;
       end if;
 
       -- AXI frame data control
       if axi_in_dv = '1' then
-        axi_in_tready_p   <= '0';
+        has_axi_data    := True;
+        axi_in_tready_p <= '0';
 
         -- Set the expected frame length. Data will passthrough and LDPC codes will be
         -- appended to complete the appropriate n_ldpc length (either 16,200 or 64,800).
@@ -384,6 +383,30 @@ begin
 
       end if;
 
+      if has_axi_data and has_ldpc_data then
+        frame_ram_en    <= '1';
+        frame_bit_index <= ldpc_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+
+      end if;
+
+      if has_axi_data then
+        has_ldpc_data   := False;
+        code_proc_ready <= '1';
+      end if;
+
+      if has_ldpc_data then
+        if ldpc_dv = '1' and s_ldpc_tlast = '0' then
+          has_axi_data    := False;
+          axi_in_tready_p <= '1';
+        end if;
+      end if;
+
+      -- if has_ldpc_data and has_axi_data then
+      --   has_axi_data    := False;
+      --   has_ldpc_data   := False;
+      --   axi_in_tready_p <= '1';
+      --   code_proc_ready <= '1';
+
     end if;
   end process;
 
@@ -397,12 +420,22 @@ begin
     begin
       if rst = '1' then
         axi_in_first_word    <= '1';
+        code_first_word      <= '1';
         axi_in_tdata_sampled <= 'U'; -- We don't want a mux with rst here
       elsif rising_edge(clk) then
 
+        if axi_in_tready = '1' then
+          axi_in_has_data <= '0';
+        end if;
+
         if axi_in_dv = '1' then
+          axi_in_has_data      <= '1';
           axi_in_first_word    <= axi_in_tlast;
           axi_in_tdata_sampled <= axi_in_tdata;
+        end if;
+
+        if ldpc_dv = '1' then
+          code_first_word <= s_ldpc_tlast;
         end if;
 
       end if;
