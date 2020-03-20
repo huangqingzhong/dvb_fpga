@@ -172,10 +172,10 @@ begin
 
     ram : entity fpga_cores.ram_inference
       generic map (
-        ADDR_WIDTH          => numbits(MAX_ROWS) + 1,
-        DATA_WIDTH          => DATA_WIDTH,
-        RAM_INFERENCE_STYLE => "auto",
-        OUTPUT_DELAY        => 1)
+        ADDR_WIDTH   => numbits(MAX_ROWS) + 1,
+        DATA_WIDTH   => DATA_WIDTH,
+        RAM_TYPE     => "auto",
+        OUTPUT_DELAY => 1)
       port map (
         -- Port A
         clk_a     => clk,

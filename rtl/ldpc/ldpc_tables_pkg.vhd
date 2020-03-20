@@ -1712,6 +1712,3 @@ package ldpc_tables_pkg is
 
 
 end package ldpc_tables_pkg;
-
-package body ldpc_tables_pkg is
-end package body ldpc_tables_pkg;

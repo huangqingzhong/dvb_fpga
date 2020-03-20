@@ -37,11 +37,11 @@ use work.ldpc_tables_pkg.all;
 ------------------------
 entity ldpc_rom is
   generic (
-    LENGTH_WIDTH        : natural := 16; -- TODO: Need to see a better way to infer this
-    ADDR_WIDTH          : natural := 8;
-    DATA_WIDTH          : natural := 16;
-    RAM_INFERENCE_STYLE : string  := "auto";
-    OUTPUT_DELAY        : natural := 0
+    LENGTH_WIDTH : natural := 16; -- TODO: Need to see a better way to infer this
+    ADDR_WIDTH   : natural := 8;
+    DATA_WIDTH   : natural := 16;
+    RAM_TYPE     : string  := "auto";
+    OUTPUT_DELAY : natural := 0
   );
   port (
     -- Usual ports
@@ -86,9 +86,9 @@ begin
   -------------------
   -- table_u : entity fpga_cores.rom_inference
   --   generic map (
-  --     DATA                => LDPC_TABLE,
-  --     RAM_INFERENCE_STYLE => RAM_INFERENCE_STYLE,
-  --     OUTPUT_DELAY        => 0)
+  --     DATA         => LDPC_TABLE,
+  --     RAM_TYPE     => RAM_TYPE,
+  --     OUTPUT_DELAY => 0)
   --   port map (
   --     -- Usual ports
   --     clk  => clk,
