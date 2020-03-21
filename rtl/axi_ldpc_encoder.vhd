@@ -135,9 +135,14 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal axi_out_tvalid       : std_logic;
   signal axi_out_tlast        : std_logic;
 
-  signal m_tvalid_i           : std_logic;
-  signal frame_bit_index_i    : natural range 0 to ROM_DATA_WIDTH - 1;
+  signal output_mux_ctrl      : std_logic;
 
+  signal axi_encoded_tvalid   : std_logic;
+  signal axi_encoded_tready   : std_logic;
+  signal axi_encoded_tlast    : std_logic;
+  signal axi_encoded_tdata    : std_logic_vector(DATA_WIDTH - 1 downto 0);
+
+  signal frame_bit_index_i    : natural range 0 to ROM_DATA_WIDTH - 1;
 
 begin
 
@@ -239,12 +244,12 @@ begin
       s_tvalid   => axi_out_tvalid,
       s_tlast    => axi_out_tlast,
       -- AXI stream output
-      m_tready   => m_tready,
-      m_tdata    => m_tdata,
+      m_tready   => axi_encoded_tready,
+      m_tdata    => axi_encoded_tdata,
       m_tkeep    => open,
       m_tid      => open,
-      m_tvalid   => m_tvalid_i,
-      m_tlast    => m_tlast);
+      m_tvalid   => axi_encoded_tvalid,
+      m_tlast    => axi_encoded_tlast);
 
   ------------------------------
   -- Asynchronous assignments --
@@ -253,15 +258,21 @@ begin
   frame_bit_index_i <= to_integer(unsigned(frame_bit_index));
   s_ldpc_tready_i   <= '0' when rst = '1' or extract_frame_data = '1' else code_proc_ready;
 
-
   -- AXI slave specifics
   axi_in_dv     <= '1' when axi_in_tready = '1' and axi_in_tvalid = '1' else '0';
   ldpc_dv       <= '1' when s_ldpc_tready_i = '1' and s_ldpc_tvalid = '1' else '0';
   axi_in_tready <= '0' when rst = '1' or frame_ram_last = '1' else axi_in_tready_p;
 
+
+  -- Mux output data
+  axi_encoded_tready <= m_tready when output_mux_ctrl = '1' else '0';
+  m_tdata            <= s_tdata when output_mux_ctrl = '0' else mirror_bits(axi_encoded_tdata);
+  m_tvalid           <= s_tvalid and s_tready when output_mux_ctrl = '0' else axi_encoded_tvalid;
+  m_tlast            <= output_mux_ctrl and axi_encoded_tlast;
+
+
   -- Assign internals
   s_ldpc_tready <= s_ldpc_tready_i;
-  m_tvalid      <= m_tvalid_i;
 
   ---------------
   -- Processes --
@@ -380,7 +391,7 @@ begin
       -- Handle data coming out of the frame RAM, either by using the input data of by
       -- calculating the actual final XOR'ed value
       if frame_ram_ready = '1' and extract_frame_data = '0' then
-        frame_ram_wrdata(frame_bit_index_i) <= axi_in_tdata_sampled 
+        frame_ram_wrdata(frame_bit_index_i) <= axi_in_tdata_sampled
                                                xor to_01(frame_ram_rddata(frame_bit_index_i));
       elsif frame_ram_ready = '1' and extract_frame_data = '1' then
         -- Need to clear the RAM for the next frame
@@ -435,12 +446,21 @@ begin
       if rst = '1' then
         axi_in_first_word    <= '1';
         code_first_word      <= '1';
+        output_mux_ctrl      <= '0';
         -- We don't want things muxed with rst here
         axi_in_tdata_sampled <= 'U';
         tdata                <= 'U';
       elsif rising_edge(clk) then
 
         axi_in_tdata_sampled <= tdata;
+
+        if s_tvalid = '1' and s_tready = '1' and s_tlast = '1' then
+          output_mux_ctrl      <= '1';
+        end if;
+
+        if axi_encoded_tvalid = '1' and axi_encoded_tready = '1' and axi_encoded_tlast = '1' then
+          output_mux_ctrl      <= '0';
+        end if;
 
         if axi_in_tready = '1' then
           axi_in_has_data <= '0';
