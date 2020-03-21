@@ -27,8 +27,11 @@ use fpga_cores.common_pkg.all;
 
 package dvb_utils_pkg is
 
+  constant FECFRAME_SHORT_BIT_LENGTH  : integer := 16_200;
+  constant FECFRAME_NORMAL_BIT_LENGHT : integer := 64_800;
+
   -- Sizes
-  constant DVB_N_LDPC : integer_array_t := (16_200, 64_800);
+  constant DVB_N_LDPC : integer_array_t := (FECFRAME_SHORT_BIT_LENGTH, FECFRAME_NORMAL_BIT_LENGHT);
 
   type frame_type_t is (not_set, fecframe_normal, fecframe_short);
 

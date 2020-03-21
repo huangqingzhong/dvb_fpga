@@ -266,38 +266,28 @@ begin
   ---------------
   -- Processes --
   ---------------
-  write_side_p : process(clk, rst)
-    variable xored_data    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  axi_flow_ctrl_p : process(clk, rst) -- {{
     variable has_ldpc_data : boolean := False;
     variable has_axi_data  : boolean := False;
   begin
     if rst = '1' then
       axi_in_tready_p      <= '1';
       code_proc_ready      <= '1';
-      frame_bits_remaining <= (others => '0');
 
-      encoded_data_wr_data <= (others => 'U');
-      encoded_data_wr_en   <= '0';
     elsif rising_edge(clk) then
 
       frame_ram_en       <= '0';
-      encoded_data_wr_en <= '0';
       extract_frame_data <= frame_ram_last;
-
-      -- Always return the context, will change only when needed
-      frame_ram_wrdata <= to_01(frame_ram_rddata);
 
       -- Frame RAM addressing depends if we're calculating the codes or extracting them
       ldpc_append_addr_ctrl : if (extract_frame_data = '1' or frame_ram_last = '1') then
         -- Respect AXI master adapter
         if encoded_data_wr_full = '0' then
-
           -- When extracting frame data, we need to complete the given frame. Since the
           -- frame size is not always an integer multiple of the frame length, we also need
           -- to check if data bit cnt has wrapped (MSB is 1).
           if frame_bits_remaining = 0 or frame_bits_remaining(frame_bits_remaining'length - 1) = '1' then
             frame_addr_in      <= (others => '0');
-            -- extract_frame_data <= '0';
             frame_ram_last     <= '0';
           else
             frame_ram_en       <= '1';
@@ -306,46 +296,21 @@ begin
         end if;
       end if ldpc_append_addr_ctrl;
 
-      -- When calculating the final XOR'ed value, the first bit will depend on the
-      -- address. We can safely assign here and avoid extra logic levels on the FF control
-      if unsigned(frame_addr_out) = 0 then
-        xored_data(0) := frame_ram_rddata(0);
-      else
-        xored_data(0) := encoded_data_wr_data(FRAME_RAM_DATA_WIDTH - 1) xor frame_ram_rddata(0);
-      end if;
-
-      -- Handle data coming out of the frame RAM, either by using the input data of by
-      -- calculating the actual final XOR'ed value
-      handle_frame_ram_data : if frame_ram_ready = '1' and extract_frame_data = '0' then
-        frame_ram_wrdata(frame_bit_index_i) <= axi_in_tdata_sampled 
-                                               xor to_01(frame_ram_rddata(frame_bit_index_i));
-      elsif frame_ram_ready = '1' and extract_frame_data = '1' then
-        -- Need to clear the RAM for the next frame
-        frame_ram_wrdata <= (others => '0');
-
-        -- Calculate the final XOR between output bits
-        for i in 1 to FRAME_RAM_DATA_WIDTH - 1 loop
-          xored_data(i) := frame_ram_rddata(i) xor xored_data(i - 1);
-        end loop;
-
-        -- Assign data out and decrement the bits consumed
-        frame_bits_remaining <= frame_bits_remaining - FRAME_RAM_DATA_WIDTH;
-        encoded_data_wr_data <= xored_data;
-        encoded_data_wr_en   <= '1';
-      elsif frame_ram_ready = '0' and extract_frame_data = '1' then
-        frame_ram_wrdata <= (others => '0');
-      end if handle_frame_ram_data;
-
       -- AXI LDPC table control
       if ldpc_dv = '1' then
         ldpc_offset     <= s_ldpc_offset;
-        frame_addr_in   <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
         code_proc_ready <= '0';
 
         has_ldpc_data   := True;
 
-        if s_ldpc_tlast = '1' and extract_frame_data = '0' then
-          axi_in_tready_p <= '1';
+        if frame_ram_last = '0' then
+          frame_addr_in   <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
+        end if;
+
+        if extract_frame_data = '0' then
+          if s_ldpc_tlast = '1' then
+            axi_in_tready_p <= '1';
+          end if;
         end if;
 
         if s_ldpc_tlast = '1' and axi_in_completed = '1' then
@@ -362,27 +327,9 @@ begin
         has_axi_data    := True;
         axi_in_tready_p <= '0';
 
-        -- Set the expected frame length. Data will passthrough and LDPC codes will be
-        -- appended to complete the appropriate n_ldpc length (either 16,200 or 64,800).
-        -- Timing-wise, the best way to do this is by setting the counter to - N + 2;
-        -- whenever it gets to 1 it will have counted N items.
-        if axi_in_first_word = '1' then
-          if axi_in_frame_type = FECFRAME_SHORT then
-            frame_bits_remaining <= to_unsigned(16_199, frame_bits_remaining'length);
-          elsif axi_in_frame_type = FECFRAME_NORMAL then
-            frame_bits_remaining <= to_unsigned(64_799, frame_bits_remaining'length);
-          else
-            report "Don't know how to handle frame type=" & quote(frame_type_t'image(axi_in_frame_type))
-              severity Error;
-          end if;
-        else
-          frame_bits_remaining <= frame_bits_remaining - 1;
-        end if;
-
         if axi_in_tlast = '1' then
           axi_in_completed <= '1';
         end if;
-
       end if;
 
       if has_axi_data and has_ldpc_data then
@@ -401,9 +348,80 @@ begin
           axi_in_tready_p <= '1';
         end if;
       end if;
-
     end if;
-  end process;
+  end process; -- }}
+
+  frame_ram_data_handle_p : process(clk, rst) -- {{
+    variable xored_data    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  begin
+    if rst = '1' then
+      encoded_data_wr_en   <= '0';
+      encoded_data_wr_last <= '0';
+      encoded_data_wr_data <= (others => 'U');
+
+      frame_bits_remaining <= (others => '0');
+      frame_ram_wrdata     <= (others => 'U');
+    elsif rising_edge(clk) then
+
+      encoded_data_wr_en   <= '0';
+      encoded_data_wr_last <= '0';
+
+      -- Always return the context, will change only when needed
+      frame_ram_wrdata <= to_01(frame_ram_rddata);
+
+      -- When calculating the final XOR'ed value, the first bit will depend on the
+      -- address. We can safely assign here and avoid extra logic levels on the FF control
+      if unsigned(frame_addr_out) = 0 then
+        xored_data(0) := frame_ram_rddata(0);
+      else
+        xored_data(0) := encoded_data_wr_data(FRAME_RAM_DATA_WIDTH - 1) xor frame_ram_rddata(0);
+      end if;
+
+      -- Handle data coming out of the frame RAM, either by using the input data of by
+      -- calculating the actual final XOR'ed value
+      if frame_ram_ready = '1' and extract_frame_data = '0' then
+        frame_ram_wrdata(frame_bit_index_i) <= axi_in_tdata_sampled 
+                                               xor to_01(frame_ram_rddata(frame_bit_index_i));
+      elsif frame_ram_ready = '1' and extract_frame_data = '1' then
+        -- Need to clear the RAM for the next frame
+        frame_ram_wrdata <= (others => '0');
+
+        -- Calculate the final XOR between output bits
+        for i in 1 to FRAME_RAM_DATA_WIDTH - 1 loop
+          xored_data(i) := frame_ram_rddata(i) xor xored_data(i - 1);
+        end loop;
+
+        -- Assign data out and decrement the bits consumed
+        encoded_data_wr_en   <= '1';
+        encoded_data_wr_data <= xored_data;
+        frame_bits_remaining <= frame_bits_remaining - FRAME_RAM_DATA_WIDTH;
+      elsif frame_ram_ready = '0' and extract_frame_data = '1' then
+        frame_ram_wrdata     <= (others => '0');
+      end if;
+
+      -- AXI frame data control
+      if axi_in_dv = '1' then
+        -- Set the expected frame length. Data will passthrough and LDPC codes will be
+        -- appended to complete the appropriate n_ldpc length (either 16,200 or 64,800).
+        -- Timing-wise, the best way to do this is by setting the counter to - N + 2;
+        -- whenever it gets to 1 it will have counted N items.
+        if axi_in_first_word = '1' then
+          if axi_in_frame_type = FECFRAME_SHORT then
+            frame_bits_remaining <= to_unsigned(FECFRAME_SHORT_BIT_LENGTH - 1,
+                                                frame_bits_remaining'length);
+          elsif axi_in_frame_type = FECFRAME_NORMAL then
+            frame_bits_remaining <= to_unsigned(FECFRAME_NORMAL_BIT_LENGHT - 1,
+                                                frame_bits_remaining'length);
+          else
+            report "Don't know how to handle frame type=" & quote(frame_type_t'image(axi_in_frame_type))
+              severity Error;
+          end if;
+        else
+          frame_bits_remaining <= frame_bits_remaining - 1;
+        end if;
+      end if;
+    end if;
+  end process; -- }}
 
   -- The config ports are valid at the first word of the frame, but we must not rely on
   -- the user keeping it unchanged. Hide this on a block to leave the core code a bit
@@ -437,7 +455,6 @@ begin
         if ldpc_dv = '1' then
           code_first_word <= s_ldpc_tlast;
         end if;
-
       end if;
     end process;
   end block config_sample_block; -- }}
