@@ -306,10 +306,13 @@ begin
         tready_probability <= 1.0;
 
         for i in configs'range loop
-          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
+          run_test(configs(i), number_of_frames => 1);
         end loop;
 
         wait_for_transfers(configs'length);
+
+        walk(128);
+
 
       elsif run("slow_master") then
         tvalid_probability <= 0.5;

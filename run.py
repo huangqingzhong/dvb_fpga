@@ -267,7 +267,7 @@ def main():
             generics=dict(
                 test_cfg=config.getTestConfig(
                     input_file_path="ldpc_encoder_input.bin",
-                    reference_file_path="bch_encoder_input.bin",
+                    reference_file_path="bit_interleaver_input.bin",
                 ),
                 NUMBER_OF_TEST_FRAMES=1,
             ),
