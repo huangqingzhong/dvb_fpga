@@ -221,11 +221,10 @@ def main():
         p.join(ROOT, "third_party", "hdl_string_format", "src", "*.vhd")
     )
 
-    cli.add_library("fpga_cores")
-    cli.library("fpga_cores").add_source_files(
+    cli.add_library("fpga_cores").add_source_files(
         p.join(ROOT, "third_party", "fpga_cores", "src", "*.vhd")
     )
-    cli.library("fpga_cores").add_source_files(
+    cli.add_library("fpga_cores_sim").add_source_files(
         p.join(ROOT, "third_party", "fpga_cores", "sim", "*.vhd")
     )
 

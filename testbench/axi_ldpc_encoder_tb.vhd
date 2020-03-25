@@ -38,15 +38,15 @@ use str_format.str_format_pkg.all;
 
 library fpga_cores;
 use fpga_cores.common_pkg.all;
-use fpga_cores.file_utils_pkg.all;
-use fpga_cores.testbench_utils_pkg.all;
+
+library fpga_cores_sim;
+use fpga_cores_sim.file_utils_pkg.all;
+use fpga_cores_sim.testbench_utils_pkg.all;
 
 use work.dvb_sim_utils_pkg.all;
 use work.dvb_utils_pkg.all;
 use work.ldpc_pkg.all;
 use work.ldpc_tables_pkg.all;
-
-library fpga_cores;
 
 entity axi_ldpc_encoder_tb is
   generic (
@@ -155,7 +155,7 @@ begin
 
 
   -- AXI file read
-  axi_file_reader_u : entity fpga_cores.axi_file_reader
+  axi_file_reader_u : entity fpga_cores_sim.axi_file_reader
     generic map (
       READER_NAME => FILE_READER_NAME,
       DATA_WIDTH  => DATA_WIDTH)
@@ -173,7 +173,7 @@ begin
       m_tvalid           => m_tvalid,
       m_tlast            => m_tlast);
 
-  axi_file_compare_u : entity fpga_cores.axi_file_compare
+  axi_file_compare_u : entity fpga_cores_sim.axi_file_compare
     generic map (
       READER_NAME     => FILE_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
@@ -583,153 +583,172 @@ begin
 
 
   ----------------------------------------------------------------------------------------------------------
-  -- dbg_proc_array : process
-  --   constant logger : logger_t := get_logger("dbg_proc_array");
-  --   variable mem    : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0);
+  dbg_proc_array : process
+    constant logger : logger_t := get_logger("dbg_proc_array");
+    variable mem    : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0);
 
-  --   procedure accumulate_ldpc (
-  --     constant table     : in integer_2d_array_t;
-  --     -- variable data      : out std_logic_vector(ldpc_length - 1 downto 0)) is
-  --     variable data      : out std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0)) is
-  --     variable rows      : natural := 0;
-  --     variable ptr       : natural := 0;
-  --     variable ptr_addr  : natural := 0;
-  --     variable ptr_bit   : natural := 0;
-  --     variable bit_index : natural := 0;
-  --   begin
-  --     data := (others => (others => '0'));
+    procedure accumulate_ldpc (
+      constant table      : in integer_2d_array_t;
+      -- variable data    : out std_logic_vector(ldpc_length - 1 downto 0)) is
+      variable data       : out std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0)) is
+      variable rows       : natural := 0;
+      variable ptr        : natural := 0;
+      variable ptr_addr   : natural := 0;
+      variable ptr_bit    : natural := 0;
+      variable bit_index  : natural := 0;
+      variable data_index : natural := 0;
+      variable data_bit : std_logic;
+    begin
+      data := (others => (others => '0'));
 
-  --     for line_no in table'range loop
-  --       rows := table(line_no)(0);
+      for line_no in table'range loop
+        rows := table(line_no)(0);
 
-  --       for group_cnt in 0 to 359 loop
-  --         wait until rising_edge(clk) and m_tvalid = '1' and m_tready = '1';
+        for group_cnt in 0 to 359 loop
 
-  --         for row in 1 to table(line_no)'length - 1 loop
-  --           ptr := (table(line_no)(row) + (bit_index mod 360) * LDPC_Q) mod ldpc_length;
+          if data_index = 0 then
+            wait until rising_edge(clk) and m_tvalid = '1' and m_tready = '1';
+          end if;
 
-  --           ptr_addr := ptr / 16;
-  --           ptr_bit  := ptr mod 16;
+          data_bit := m_tdata(DATA_WIDTH - 1 - data_index);
 
-  --           if (bit_index mod 360) < 8 then
-  --             info(
-  --               logger,
-  --               sformat(
-  --                 "bit #%d: %s => line_no=%d, row=%d, ptr = %d (%d, %d)",
-  --                 fo(bit_index),
-  --                 fo(m_tdata),
-  --                 fo(line_no),
-  --                 fo(row),
-  --                 fo(ptr),
-  --                 fo(ptr_addr),
-  --                 fo(ptr_bit)
-  --               ));
-  --           end if;
+          if data_index = DATA_WIDTH - 1 then
+            data_index := 0;
+          else
+            data_index := data_index + 1;
+          end if;
 
-  --           data(ptr_addr)(ptr_bit) := m_tdata xor data(ptr_addr)(ptr_bit);
+          for row in 1 to table(line_no)'length - 1 loop
+            ptr := (table(line_no)(row) + (bit_index mod 360) * LDPC_Q) mod ldpc_length;
 
-  --         end loop;
+            ptr_addr := ptr / 16;
+            ptr_bit  := ptr mod 16;
 
-  --         if (bit_index mod 360) < 8 then
-  --           info(logger, "                                                              ");
-  --         end if;
+            data(ptr_addr)(ptr_bit) := data_bit xor data(ptr_addr)(ptr_bit);
 
-  --         if m_tlast = '1' then
-  --           info(logger, sformat("Exiting at line_no=%d / %d, bit %d", fo(line_no), fo(table'length), fo(bit_index)));
-  --           return;
-  --         end if;
+            if ptr = 1078 then
+              debug(
+                logger,
+                sformat(
+                  "[%d] data(%d)(%d) = %r  || m_tdata = %r",
+                  fo(data_index),
+                  fo(ptr_addr),
+                  fo(ptr_bit),
+                  fo(data(ptr_addr)),
+                  fo(m_tdata)
+                )
+              );
+            end if;
 
-  --         bit_index := bit_index + 1;
-  --       end loop;
+          end loop;
 
-  --     end loop;
+          if m_tlast = '1' then
+            info(
+              logger,
+              sformat(
+                "Exiting at line_no=%d / %d, bit %d",
+                fo(line_no),
+                fo(table'length),
+                fo(bit_index)
+              )
+            );
 
-  --   end;
+            return;
+          end if;
 
-  --   --------------------------------------------------------------------------------
+          bit_index := bit_index + 1;
+        end loop;
 
-  --   impure function post_xor (
-  --     constant data : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0))
-  --     return std_logic_vector_2d_t is
-  --     variable result : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0);
-  --     variable addr   : natural;
-  --     variable offset : natural;
-  --   begin
+      end loop;
 
-  --     result := data;
+    end;
 
-  --     for i in 1 to ldpc_length - 1 loop
-  --       addr := i / 16;
-  --       offset := i mod 16;
+    --------------------------------------------------------------------------------
 
-  --       result(addr)(offset) := result(addr)(offset) xor result((i - 1) / 16)((i - 1) mod 16);
+    impure function post_xor (
+      constant data : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0))
+      return std_logic_vector_2d_t is
+      variable result : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0);
+      variable addr   : natural;
+      variable offset : natural;
+    begin
 
-  --       -- if addr = 0 then
-  --       --   debug(
-  --       --     logger,
-  --       --     sformat(
-  --       --       "result(%d)(%d) := result(%d)(%d) xor result(%d)(%d) ==> " &
-  --       --       "result(%d)(%d) := %r xor %r => %r",
-  --       --       fo(addr), fo(offset),
-  --       --       fo(addr), fo(offset),
-  --       --       fo((i - 1) / 16), fo((i - 1) mod 16),
-  --       --       fo(addr), fo(offset),
-  --       --       fo(result(addr)(offset)), fo(result((i - 1) / 16)((i - 1) mod 16)),
-  --       --       fo(result(addr)(offset))
-  --       --     )
-  --       --   );
-  --       -- end if;
+      result := data;
 
-  --     end loop;
-  --     return result;
-  --   end;
+      for i in 1 to ldpc_length - 1 loop
+        addr := i / 16;
+        offset := i mod 16;
 
-  -- begin
-  --   mem := (others => (others => '0'));
+        result(addr)(offset) := result(addr)(offset) xor result((i - 1) / 16)((i - 1) mod 16);
 
-  --   wait until rst = '0';
+        -- if addr = 0 then
+        --   debug(
+        --     logger,
+        --     sformat(
+        --       "result(%d)(%d) := result(%d)(%d) xor result(%d)(%d) ==> " &
+        --       "result(%d)(%d) := %r xor %r => %r",
+        --       fo(addr), fo(offset),
+        --       fo(addr), fo(offset),
+        --       fo((i - 1) / 16), fo((i - 1) mod 16),
+        --       fo(addr), fo(offset),
+        --       fo(result(addr)(offset)), fo(result((i - 1) / 16)((i - 1) mod 16)),
+        --       fo(result(addr)(offset))
+        --     )
+        --   );
+        -- end if;
 
-  --   while True loop
-  --     accumulate_ldpc(table, mem);
+      end loop;
+      return result;
+    end;
 
-  --     info(logger, "Before post XOR:");
-  --     for word in 0 to 7 loop
-  --       info(
-  --         logger,
-  --         sformat(
-  --           "%3d | %r  | %b || mirrored: %r | %b",
-  --           fo(word),
-  --           fo(mem(word)),
-  --           fo(mem(word)),
-  --           fo(mirror_bits(mem(word))),
-  --           fo(mirror_bits(mem(word)))
-  --         )
-  --       );
-  --     end loop;
+  begin
+    mem := (others => (others => '0'));
 
-  --     mem := post_xor(mem);
+    wait until rst = '0';
 
-  --     info(logger, "Post XOR:");
-  --     for word in 0 to 7 loop
-  --       info(
-  --         logger,
-  --         sformat(
-  --           "%3d | %r  | %b || mirrored: %r | %b",
-  --           fo(word),
-  --           fo(mem(word)),
-  --           fo(mem(word)),
-  --           fo(mirror_bits(mem(word))),
-  --           fo(mirror_bits(mem(word)))
-  --         ));
-  --     end loop;
+    while True loop
+      accumulate_ldpc(table, mem);
 
-  --   end loop;
+      info(logger, "Before post XOR:");
+      -- for word in 0 to 7 loop
+      for word in 16#40# to 16#50# loop
+        info(
+          logger,
+          sformat(
+            "%3d | %r  | %b || mirrored: %r | %b",
+            fo(word),
+            fo(mem(word)),
+            fo(mem(word)),
+            fo(mirror_bits(mem(word))),
+            fo(mirror_bits(mem(word)))
+          )
+        );
+      end loop;
 
-  --   -- wait until rising_edge(clk);
-  --   -- if rst = '0' then
-  --   --   check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
-  --   -- end if;
-  -- end process;
+      mem := post_xor(mem);
+
+      info(logger, "Post XOR:");
+      -- for word in 0 to 7 loop
+      for word in 16#40# to 16#50# loop
+        info(
+          logger,
+          sformat(
+            "%3d | %r  | %b || mirrored: %r | %b",
+            fo(word),
+            fo(mem(word)),
+            fo(mem(word)),
+            fo(mirror_bits(mem(word))),
+            fo(mirror_bits(mem(word)))
+          ));
+      end loop;
+
+    end loop;
+
+    -- wait until rising_edge(clk);
+    -- if rst = '0' then
+    --   check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
+    -- end if;
+  end process;
 
 end axi_ldpc_encoder_tb;
 
