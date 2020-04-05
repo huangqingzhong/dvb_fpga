@@ -164,7 +164,7 @@ begin
   -------------------
   -- Duplicate input stream, one leaf will connect to the output and the other to the
   -- actual LDPC calculation that will be appended
-  input_duplicate_block : block -- {{
+  input_duplicate_block : block -- {{ --------------------------------------------------
     constant WIDTHS : integer_vector := (
       0 => DATA_WIDTH,
       1 => 1,
@@ -215,10 +215,10 @@ begin
         m1_tdata  => axi_dup1_tdata,
         m1_tvalid => axi_ldpc_tvalid);
 
-  end block; -- }}
+  end block; -- }} ---------------------------------------------------------------------
 
   -- Convert from FRAME_RAM_DATA_WIDTH to the specified data width
-  input_conversion_block : block -- {{
+  input_conversion_block : block -- {{ -------------------------------------------------
     signal axi_bit_tid  : std_logic_vector(FRAME_TYPE_WIDTH - 1 downto 0);
 
   begin
@@ -248,7 +248,7 @@ begin
         m_tid      => axi_bit_tid,
         m_tvalid   => axi_bit_tvalid,
         m_tlast    => axi_bit_tlast);
-    end block; -- }}
+    end block; -- }} -------------------------------------------------------------------
 
   frame_ram_u : entity fpga_cores.pipeline_context_ram
     generic map (
@@ -357,7 +357,7 @@ begin
   ---------------
   -- Processes --
   ---------------
-  axi_flow_ctrl_p : process(clk, rst) -- {{
+  axi_flow_ctrl_p : process(clk, rst) -- {{ --------------------------------------------
     variable has_table_data  : boolean := False;
     variable has_axi_data    : boolean := False;
 
@@ -489,9 +489,9 @@ begin
         axi_bit_tready_p   <= '1';
       end if;
     end if;
-  end process; -- }}
+  end process; -- }} -------------------------------------------------------------------
 
-  frame_ram_data_handle_p : process(clk, rst) -- {{
+  frame_ram_data_handle_p : process(clk, rst) -- {{ ------------------------------------
     variable xored_data    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   begin
     if rst = '1' then
@@ -538,12 +538,12 @@ begin
       end if;
 
     end if;
-  end process; -- }}
+  end process; -- }} -------------------------------------------------------------------
 
   -- The config ports are valid at the first word of the frame, but we must not rely on
   -- the user keeping it unchanged. Hide this on a block to leave the core code a bit
   -- cleaner
-  config_sample_block  : block -- {{
+  config_sample_block  : block -- {{ ---------------------------------------------------
     signal tdata : std_logic;
   begin
 
@@ -579,7 +579,7 @@ begin
 
       end if;
     end process;
-  end block config_sample_block; -- }}
+  end block config_sample_block; -- }} -------------------------------------------------
 
 end axi_ldpc_encoder;
 

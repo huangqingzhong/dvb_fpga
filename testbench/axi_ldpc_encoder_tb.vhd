@@ -242,18 +242,17 @@ begin
     constant self         : actor_t := new_actor("main");
     constant input_cfg_p  : actor_t := find("input_cfg_p");
     variable file_checker : file_reader_t := new_file_reader(FILE_CHECKER_NAME);
-    ------------------------------------------------------------------------------------
-    procedure walk(constant steps : natural) is
+
+    procedure walk(constant steps : natural) is -- {{ ----------------------------------
     begin
       if steps /= 0 then
         for step in 0 to steps - 1 loop
           wait until rising_edge(clk);
         end loop;
       end if;
-    end procedure walk;
+    end procedure walk; -- }} ----------------------------------------------------------
 
-    ------------------------------------------------------------------------------------
-    procedure run_test (
+    procedure run_test ( -- {{ ---------------------------------------------------------
       constant config           : config_t;
       constant number_of_frames : in positive) is
       variable file_reader_msg  : msg_t;
@@ -298,10 +297,11 @@ begin
 
       end loop;
 
-    end procedure run_test;
+    end procedure run_test; -- }} ------------------------------------------------------
 
-    ------------------------------------------------------------------------------------
-    procedure wait_for_transfers ( constant count : in natural) is
+    procedure wait_for_transfers ( -- {{ -----------------------------------------------
+      constant count : in natural
+    ) is
       variable msg : msg_t;
     begin
       -- Will get one response for each frame from the file checker and one for the input
@@ -310,8 +310,7 @@ begin
       -- Failure(sformat("Got reply from '%s'", name(msg.sender)));
 
       wait_all_read(net, file_checker);
-    end procedure wait_for_transfers;
-    ------------------------------------------------------------------------------------
+    end procedure wait_for_transfers; -- }} --------------------------------------------
 
   begin
 
@@ -423,7 +422,7 @@ begin
     -- check_equal(error_cnt, 0);
   end process; -- }}
 
-  ldpc_table_p : process
+  ldpc_table_p : process -- {{ ---------------------------------------------------------
     constant self : actor_t := new_actor("ldpc_table_p");
     constant main : actor_t := find("main");
     variable msg  : msg_t;
@@ -431,91 +430,7 @@ begin
 
     subtype data_array_t is data_tuple_array_t(open)(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
 
-    -- ------------------------------------------------------------------
-    -- procedure write_cell (
-    --   constant offset    : natural;
-    --   constant tuser     : std_logic_vector;
-    --   constant last      : boolean := False) is
-    -- begin
-    --   axi_ldpc.tdata   <= std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length));
-    --   axi_ldpc.tuser   <= tuser;
-    --   axi_ldpc.tvalid  <= '1';
-    --   if last then
-    --     axi_ldpc.tlast <= '1';
-    --   end if;
-
-    --   wait until axi_ldpc.tvalid = '1' and axi_ldpc.tready = '1' and rising_edge(clk);
-
-    --   axi_ldpc.tdata  <= (others => 'U');
-    --   axi_ldpc.tuser  <= (others => 'U');
-    --   axi_ldpc.tvalid <= '0';
-    --   axi_ldpc.tlast  <= '0';
-    -- end;
-
-    -- ------------------------------------------------------------------
-    -- procedure write_config ( constant msg : msg_t ) is
-    --   constant constellation : constellation_t := pop(msg);
-    --   constant frame_type    : frame_type_t    := pop(msg);
-    --   constant code_rate     : code_rate_t     := pop(msg);
-    --   -- -- TODO: Table should be retrieved from above parameters
-    --   constant table         : integer_2d_array_t := cfg_table;
-    --   constant LDPC_Q        : natural            := cfg_LDPC_Q;
-    --   constant ldpc_length   : natural            := cfg_ldpc_length;
-
-    --   variable table_line    : natural            := 0;
-    --   variable bit_index     : natural            := 0;
-    --   variable dbg_enough        : boolean            := False;
-
-    --   ------------------------------------------------------------------
-    --   procedure populate_table(
-    --     constant q     : natural;
-    --     constant L     : integer_vector) is
-    --     constant rows  : natural := L(0);
-    --     variable value : natural;
-    --     variable msg   : line;
-    --     variable tuser : std_logic_vector(axi_ldpc.tuser'range);
-    --   begin
-    --     -- info(sformat("Line has %d rows", fo(rows)));
-    --     for group_cnt in 0 to 359 loop
-    --       write(msg, sformat("Group: %4d || ", fo(group_cnt)));
-    --       for cell in 1 to rows loop
-    --         value := (L(cell) + (bit_index mod 360) * q) mod ldpc_length;
-    --         write(msg, sformat("%4d ", fo(value)));
-
-    --         tuser   := from_boolean(cell = rows)
-    --                    & std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1));
-
-    --         write_cell(
-    --           value,
-    --           tuser,
-    --           last => cell = rows and table_line = table'length - 1 and group_cnt = 359
-    --         );
-
-    --       end loop;
-    --       if not dbg_enough then
-    --         -- info(msg.all);
-    --         deallocate(msg);
-    --         msg       := null;
-    --       end if;
-    --       bit_index := bit_index + 1;
-    --     end loop;
-
-    --     -- if msg /= null then
-    --     if not dbg_enough then
-    --       assert msg = null;
-    --     end if;
-    --   end;
-
-    -- begin
-    --   for i in table'range loop
-    --     -- info(sformat("Writing line %d", fo(table_line)));
-    --     table_line := i;
-    --     populate_table(q => LDPC_Q, L => table(table_line));
-    --     -- dbg_enough := True;
-    --   end loop;
-    -- end;
-
-    procedure handle_msg ( constant msg : msg_t ) is -- {{ -------------------------------------------------
+    procedure handle_msg ( constant msg : msg_t ) is -- {{ -----------------------------
       constant constellation : constellation_t := pop(msg);
       constant frame_type    : frame_type_t    := pop(msg);
       constant code_rate     : code_rate_t     := pop(msg);
@@ -527,7 +442,7 @@ begin
 
       variable dbg_enough    : boolean := False;
 
-      procedure populate_table( -- {{ --------------------------------------------------------------------------
+      procedure populate_table( -- {{ --------------------------------------------------
         constant table       : integer_2d_array_t;
         constant q           : natural;
         constant ldpc_length : natural) is
@@ -570,7 +485,7 @@ begin
 
         -- error(sformat("Wrote %d entries", fo(data_index)));
 
-      end; -- }} -------------------------------------------------------------------------------------------
+      end; -- }} -----------------------------------------------------------------------
 
     begin
       populate_table(table => cfg_table, q => cfg_LDPC_Q, ldpc_length => cfg_ldpc_length);
@@ -582,7 +497,7 @@ begin
         data        => data,
         probability => 1.0,
         blocking    => True);
-    end; -- }} ---------------------------------------------------------------------------------------------
+    end; -- }} -------------------------------------------------------------------------
 
 
   begin
@@ -597,9 +512,9 @@ begin
       info("Finished writing config");
     end loop;
 
-  end process;
+  end process; -- }} -------------------------------------------------------------------
 
-  cnt_p : process
+  cnt_p : process -- {{ ----------------------------------------------------------------
   begin
     wait until rst = '0';
     while True loop
@@ -627,7 +542,7 @@ begin
         end if;
       end if;
     end loop;
-  end process;
+  end process; -- }} -------------------------------------------------------------------
 
   -- ----------------------------------------------------------------------------------------------------------
   -- dbg_proc_linear : process
@@ -741,13 +656,12 @@ begin
   -- end process;
 
 
-  ----------------------------------------------------------------------------------------------------------
-  dbg_proc_array : process
+  dbg_proc_array : process -- {{ -------------------------------------------------------
     constant logger : logger_t := get_logger("dbg_proc_array");
 
     variable mem    : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0);
 
-    procedure accumulate_ldpc (
+    procedure accumulate_ldpc ( -- {{ --------------------------------------------------
       constant table            : in integer_2d_array_t;
       variable codes            : out std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0)) is
       variable rows             : natural := 0;
@@ -823,11 +737,9 @@ begin
 
       end loop;
 
-    end;
+    end procedure; -- }} ---------------------------------------------------------------
 
-    --------------------------------------------------------------------------------
-
-    impure function post_xor (
+    impure function post_xor ( -- {{ ---------------------------------------------------
       constant data : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0))
       return std_logic_vector_2d_t is
       variable result : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0);
@@ -861,7 +773,7 @@ begin
 
       end loop;
       return result;
-    end;
+    end function; -- }} ----------------------------------------------------------------
 
   begin
     mem := (others => (others => '0'));
@@ -910,7 +822,7 @@ begin
     -- if rst = '0' then
     --   check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
     -- end if;
-  end process;
+  end process; -- }} -------------------------------------------------------------------
 
 end axi_ldpc_encoder_tb;
 
