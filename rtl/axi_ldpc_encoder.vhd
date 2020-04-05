@@ -46,9 +46,10 @@ entity axi_ldpc_encoder is
     cfg_code_rate     : in  code_rate_t;
 
     -- AXI LDPC table input
-    s_ldpc_tready     : out std_logic := '1';
+    s_ldpc_tready     : out std_logic;
     s_ldpc_tvalid     : in  std_logic;
     s_ldpc_offset     : in  std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+    s_ldpc_next       : in  std_logic;
     s_ldpc_tuser      : in  std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
     s_ldpc_tlast      : in  std_logic;
 
@@ -78,6 +79,8 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   -------------
   -- Signals --
   -------------
+  signal s_ldpc_dv              : std_logic;
+
   signal axi_ldpc_constellation : constellation_t;
   signal axi_ldpc_frame_type    : frame_type_t;
   signal axi_ldpc_code_rate     : code_rate_t;
@@ -88,70 +91,71 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal axi_ldpc_tlast         : std_logic;
   signal axi_ldpc_dv            : std_logic;
 
+  signal axi_passthrough_tdata  : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal axi_passthrough_tvalid : std_logic;
   signal axi_passthrough_tready : std_logic;
 
-  signal axi_bit_tready        : std_logic;
-  signal axi_bit_tdata         : std_logic;
-  signal axi_bit_tvalid        : std_logic;
-  signal axi_bit_tlast         : std_logic;
+  signal axi_bit_tready         : std_logic;
+  signal axi_bit_tdata          : std_logic;
+  signal axi_bit_tvalid         : std_logic;
+  signal axi_bit_tlast          : std_logic;
 
-  signal axi_bit_dv            : std_logic;
-  signal axi_bit_first_word    : std_logic;
-  signal axi_bit_has_data      : std_logic;
-  signal axi_bit_tready_p      : std_logic;
+  signal axi_bit_dv             : std_logic;
+  signal axi_bit_first_word     : std_logic;
+  signal axi_bit_has_data       : std_logic;
+  signal axi_bit_tready_p       : std_logic;
 
-  signal axi_bit_constellation : constellation_t;
-  signal axi_bit_frame_type    : frame_type_t;
-  signal axi_bit_code_rate     : code_rate_t;
+  signal axi_bit_frame_type     : frame_type_t;
 
-  signal axi_bit_completed     : std_logic := '0';
   -- AXI data synchronized to the frame RAM output data
-  signal axi_bit_tdata_sampled : std_logic;
+  signal axi_bit_tdata_sampled  : std_logic;
 
-  signal dbg_offset_1078       : boolean;
-  signal table_dv              : std_logic;
-  signal table_offset          : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+  signal table_offset           : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
 
-  signal frame_ram_ready      : std_logic;
-  signal frame_bits_remaining : unsigned(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+  signal frame_ram_ready        : std_logic;
+  signal frame_bits_remaining   : unsigned(numbits(max(DVB_N_LDPC)) - 1 downto 0);
 
   -- Interface with the frame RAM
-  signal frame_ram_en         : std_logic;
-  signal frame_addr_in        : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  signal frame_ram_en           : std_logic;
+  signal frame_addr_in          : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
 
   -- Frame RAM output
-  signal frame_addr_out       : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
+  signal frame_addr_out         : std_logic_vector(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
   -- frame_bit_index is sync with frame_addr_out and rame_ram_rddata
-  signal frame_bit_index      : std_logic_vector(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
-  signal frame_ram_rddata     : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
+  signal frame_bit_index        : std_logic_vector(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+  signal frame_ram_rddata       : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
+
+  signal frame_in_last          : std_logic;
+  signal frame_out_last         : std_logic;
 
   -- Frame RAM data loop
-  signal frame_ram_wrdata     : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  signal frame_ram_wrdata       : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
 
-  signal frame_ram_last       : std_logic := '0';
-  signal extract_frame_data   : std_logic := '0';
+  signal extract_frame_data     : std_logic;
+  signal frame_addr_rst         : std_logic;
+  signal frame_addr_rst_reg0    : std_logic;
 
-  signal table_handle_ready   : std_logic;
+  signal table_handle_ready     : std_logic;
 
-  signal encoded_data_wr_en   : std_logic;
-  signal encoded_data_wr_full : std_logic;
-  signal encoded_data_wr_data : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
-  signal encoded_data_wr_last : std_logic;
+  signal encoded_wr_mask        : std_logic;
+  signal encoded_wr_en          : std_logic;
+  signal encoded_wr_full        : std_logic;
+  signal encoded_wr_data        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  signal encoded_wr_last        : std_logic;
 
-  signal axi_out_tready       : std_logic;
-  signal axi_out_tdata        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
-  signal axi_out_tvalid       : std_logic;
-  signal axi_out_tlast        : std_logic;
+  signal axi_out_tready         : std_logic;
+  signal axi_out_tdata          : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+  signal axi_out_tvalid         : std_logic;
+  signal axi_out_tlast          : std_logic;
 
-  signal output_mux_ctrl      : std_logic;
+  signal output_mux_ctrl        : std_logic;
 
-  signal axi_encoded_tvalid   : std_logic;
-  signal axi_encoded_tready   : std_logic;
-  signal axi_encoded_tlast    : std_logic;
-  signal axi_encoded_tdata    : std_logic_vector(DATA_WIDTH - 1 downto 0);
+  signal axi_encoded_tvalid     : std_logic;
+  signal axi_encoded_tready     : std_logic;
+  signal axi_encoded_tlast      : std_logic;
+  signal axi_encoded_tdata      : std_logic_vector(DATA_WIDTH - 1 downto 0);
 
-  signal frame_bit_index_i    : natural range 0 to ROM_DATA_WIDTH - 1;
+  signal frame_bit_index_i      : natural range 0 to ROM_DATA_WIDTH - 1;
 
 begin
 
@@ -160,7 +164,7 @@ begin
   -------------------
   -- Duplicate input stream, one leaf will connect to the output and the other to the
   -- actual LDPC calculation that will be appended
-  input_duplicate_block : block
+  input_duplicate_block : block -- {{
     constant WIDTHS : integer_vector := (
       0 => DATA_WIDTH,
       1 => 1,
@@ -173,22 +177,17 @@ begin
     signal s_tdata_agg            : std_logic_vector(AXI_DUP_DATA_WIDTH - 1 downto 0);
 
     signal axi_dup0_tdata         : std_logic_vector(AXI_DUP_DATA_WIDTH - 1 downto 0);
-
-    signal axi_passthrough_tdata  : std_logic_vector(DATA_WIDTH - 1 downto 0);
-    signal axi_passthrough_tlast  : std_logic;
-
     signal axi_dup1_tdata         : std_logic_vector(AXI_DUP_DATA_WIDTH - 1 downto 0);
 
   begin
 
     s_tdata_agg <= encode(cfg_code_rate) &
                    encode(cfg_constellation) &
-                   encode(cfg_frame_type) & 
+                   encode(cfg_frame_type) &
                    s_tlast &
                    s_tdata;
 
     axi_passthrough_tdata  <= extract(axi_dup0_tdata, 0, WIDTHS);
-    axi_passthrough_tlast  <= extract(axi_dup0_tdata, 1, WIDTHS);
 
     axi_ldpc_tdata         <= extract(axi_dup1_tdata, 0, WIDTHS);
     axi_ldpc_tlast         <= extract(axi_dup1_tdata, 1, WIDTHS);
@@ -216,33 +215,21 @@ begin
         m1_tdata  => axi_dup1_tdata,
         m1_tvalid => axi_ldpc_tvalid);
 
-  end block;
+  end block; -- }}
 
   -- Convert from FRAME_RAM_DATA_WIDTH to the specified data width
-  input_conversion_block : block
-    constant WIDTHS : integer_vector := (
-      0 => FRAME_TYPE_WIDTH,
-      1 => CONSTELLATION_WIDTH,
-      2 => CODE_RATE_WIDTH);
+  input_conversion_block : block -- {{
+    signal axi_bit_tid  : std_logic_vector(FRAME_TYPE_WIDTH - 1 downto 0);
 
-    constant ID_WIDTH   : integer := sum(WIDTHS);
-    signal axi_ldpc_tid : std_logic_vector(ID_WIDTH - 1 downto 0);
-    signal axi_bit_tid  : std_logic_vector(ID_WIDTH - 1 downto 0);
   begin
 
-    axi_ldpc_tid <= encode(axi_ldpc_code_rate) &
-                    encode(axi_ldpc_constellation) &
-                    encode(axi_ldpc_frame_type);
-
-    axi_bit_code_rate     <= decode(extract(axi_bit_tid, 2, WIDTHS));
-    axi_bit_constellation <= decode(extract(axi_bit_tid, 1, WIDTHS)); 
-    axi_bit_frame_type    <= decode(extract(axi_bit_tid, 0, WIDTHS)); 
+    axi_bit_frame_type    <= decode(axi_bit_tid);
 
     input_width_conversion_u : entity fpga_cores.axi_stream_width_converter
       generic map (
         INPUT_DATA_WIDTH  => DATA_WIDTH,
         OUTPUT_DATA_WIDTH => 1,
-        AXI_TID_WIDTH     => ID_WIDTH)
+        AXI_TID_WIDTH     => FRAME_TYPE_WIDTH)
       port map (
         -- Usual ports
         clk        => clk,
@@ -250,8 +237,8 @@ begin
         -- AXI stream input
         s_tready   => axi_ldpc_tready,
         s_tdata    => mirror_bits(axi_ldpc_tdata), -- width converter is little endian, we need big endian
-        s_tkeep    => (others => '0'),
-        s_tid      => axi_ldpc_tid,
+        s_tkeep    => (others => to_01(axi_ldpc_tlast)),
+        s_tid      => encode(axi_ldpc_frame_type),
         s_tvalid   => axi_ldpc_tvalid,
         s_tlast    => axi_ldpc_tlast,
         -- AXI stream output
@@ -261,7 +248,7 @@ begin
         m_tid      => axi_bit_tid,
         m_tvalid   => axi_bit_tvalid,
         m_tlast    => axi_bit_tlast);
-    end block;
+    end block; -- }}
 
   frame_ram_u : entity fpga_cores.pipeline_context_ram
     generic map (
@@ -284,16 +271,16 @@ begin
   frame_ram_adapter_u : entity fpga_cores.axi_stream_master_adapter
     generic map (
       MAX_SKEW_CYCLES => 3,
-      TDATA_WIDTH     => encoded_data_wr_data'length)
+      TDATA_WIDTH     => encoded_wr_data'length)
     port map (
       -- Usual ports
       clk      => clk,
       reset    => rst,
       -- wanna-be AXI interface
-      wr_en    => encoded_data_wr_en,
-      wr_full  => encoded_data_wr_full,
-      wr_data  => encoded_data_wr_data,
-      wr_last  => encoded_data_wr_last,
+      wr_en    => encoded_wr_en,
+      wr_full  => encoded_wr_full,
+      wr_data  => encoded_wr_data,
+      wr_last  => encoded_wr_last,
       -- AXI master
       m_tvalid => axi_out_tvalid,
       m_tready => axi_out_tready,
@@ -313,7 +300,7 @@ begin
       -- AXI stream input
       s_tready   => axi_out_tready,
       s_tdata    => axi_out_tdata,
-      s_tkeep    => (others => '1'),
+      s_tkeep    => (others => axi_out_tlast),
       s_tid      => (others => '0'),
       s_tvalid   => axi_out_tvalid,
       s_tlast    => axi_out_tlast,
@@ -325,102 +312,139 @@ begin
       m_tvalid   => axi_encoded_tvalid,
       m_tlast    => axi_encoded_tlast);
 
+  frame_addr_in_rst_u : entity fpga_cores.edge_detector
+    generic map (
+      SYNCHRONIZE_INPUT => False,
+      OUTPUT_DELAY      => 0)
+    port map (
+      -- Usual ports
+      clk     => clk,
+      clken   => '1',
+      --
+      din     => extract_frame_data,
+      -- Edges detected
+      rising  => frame_addr_rst,
+      falling => open,
+      toggle  => open);
+
   ------------------------------
   -- Asynchronous assignments --
   ------------------------------
-  dbg_offset_1078 <= unsigned(table_offset) = 1078;
-
   -- Values synchronized with data from pipeline_context_ram
-  frame_bit_index_i <= to_integer(unsigned(frame_bit_index));
-  s_ldpc_tready     <= table_handle_ready and (not rst and not extract_frame_data);
-  -- s_ldpc_tready     <= '0' when rst = '1' or extract_frame_data = '1' else
-  --                      table_handle_ready;
+  frame_bit_index_i      <= to_integer(unsigned(frame_bit_index));
+  s_ldpc_tready          <= table_handle_ready and (not rst and not extract_frame_data);
 
   -- AXI slave specifics
-  axi_bit_dv     <= '1' when axi_bit_tready = '1' and axi_bit_tvalid = '1' else '0';
-  axi_ldpc_dv    <= '1' when axi_ldpc_tready = '1' and axi_ldpc_tvalid = '1' else '0';
-  table_dv       <= '1' when s_ldpc_tready = '1' and s_ldpc_tvalid = '1' else '0';
-  axi_bit_tready <= '0' when rst = '1' or frame_ram_last = '1' else axi_bit_tready_p;
+  axi_bit_dv             <= '1' when axi_bit_tready = '1' and axi_bit_tvalid = '1' else '0';
+  axi_ldpc_dv            <= '1' when axi_ldpc_tready = '1' and axi_ldpc_tvalid = '1' else '0';
+  s_ldpc_dv              <= '1' when s_ldpc_tready = '1' and s_ldpc_tvalid = '1' else '0';
+  axi_bit_tready         <= axi_bit_tready_p and not (rst or extract_frame_data);
 
   -- Mux output data
-  axi_encoded_tready     <= m_tready when output_mux_ctrl = '1' else '0';
-  axi_passthrough_tready <= m_tready when output_mux_ctrl = '0' else '0';
-  m_tdata                <= axi_ldpc_tdata when output_mux_ctrl = '0' else mirror_bits(axi_encoded_tdata);
-  m_tvalid               <= axi_ldpc_tvalid and axi_ldpc_tready when output_mux_ctrl = '0' else axi_encoded_tvalid;
+  axi_encoded_tready     <= m_tready and output_mux_ctrl;
+  axi_passthrough_tready <= m_tready and not output_mux_ctrl;
   m_tlast                <= output_mux_ctrl and axi_encoded_tlast;
+
+  m_tdata                <= axi_passthrough_tdata when output_mux_ctrl = '0' else
+                            mirror_bits(axi_encoded_tdata);
+
+  m_tvalid               <= (axi_passthrough_tvalid and axi_passthrough_tready and not output_mux_ctrl)
+                             or axi_encoded_tvalid;
+
+  frame_in_last          <= extract_frame_data when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
+                            else '0';
 
   ---------------
   -- Processes --
   ---------------
   axi_flow_ctrl_p : process(clk, rst) -- {{
-    variable has_ldpc_data : boolean := False;
-    variable has_axi_data  : boolean := False;
+    variable has_table_data  : boolean := False;
+    variable has_axi_data    : boolean := False;
+
+    variable completed_table : boolean := False;
+    variable completed_data  : boolean := False;
   begin
     if rst = '1' then
       axi_bit_tready_p     <= '1';
+      encoded_wr_mask      <= '0';
+      extract_frame_data   <= '0';
       table_handle_ready   <= '1';
 
-      frame_bits_remaining <= (others => '0');
+      completed_data       := False;
+      completed_table      := False;
+      has_axi_data         := False;
+      has_table_data       := False;
 
-      extract_frame_data   <= '0';
+      encoded_wr_last      <= 'U';
+      frame_addr_in        <= (others => 'U');
+      frame_addr_rst_reg0  <= 'U';
+      frame_bit_index      <= (others => 'U');
+      frame_bits_remaining <= (others => 'U');
+      frame_out_last       <= 'U';
       frame_ram_en         <= 'U';
+      table_offset         <= (others => 'U');
 
     elsif rising_edge(clk) then
 
-      frame_ram_en       <= '0';
-      extract_frame_data <= frame_ram_last;
+      frame_ram_en          <= '0';
+      frame_bit_index       <= table_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+      frame_out_last        <= frame_in_last;
+      encoded_wr_last       <= frame_out_last;
+
+      if frame_ram_ready = '1' then
+        frame_addr_rst_reg0 <= frame_addr_rst;
+      end if;
+
+      if frame_addr_rst_reg0 = '1' then
+        encoded_wr_mask     <= '1';
+      elsif encoded_wr_last = '1' then
+        encoded_wr_mask     <= '0';
+      end if;
 
       -- Frame RAM addressing depends if we're calculating the codes or extracting them
-      ldpc_append_addr_ctrl : if (extract_frame_data = '1' or frame_ram_last = '1') then
-        -- Respect AXI master adapter
-        if encoded_data_wr_full = '0' then
-          -- When extracting frame data, we need to complete the given frame. Since the
-          -- frame size is not always an integer multiple of the frame length, we also need
-          -- to check if data bit cnt has wrapped (MSB is 1).
-          if frame_bits_remaining = 0 or frame_bits_remaining(frame_bits_remaining'length - 1) = '1' then
-            frame_addr_in        <= (others => '0');
-            frame_ram_last       <= '0';
-          else
-            frame_ram_en         <= '1';
-            frame_addr_in        <= frame_addr_in + 1;
-            frame_bits_remaining <= frame_bits_remaining - FRAME_RAM_DATA_WIDTH;
-          end if;
+      -- Respect AXI master adapter
+      ldpc_append_addr_ctrl : if extract_frame_data = '1' and encoded_wr_full = '0' then
+        -- When extracting frame data, we need to complete the given frame. Since the
+        -- frame size is not always an integer multiple of the frame length, we also need
+        -- to check if data bit cnt has wrapped (MSB is 1).
+        if frame_addr_rst = '1' then
+          frame_ram_en         <= '1';
+          frame_addr_in        <= (others => '0');
+        elsif frame_out_last = '1' then
+          frame_addr_in        <= (others => '0');
+          extract_frame_data   <= '0';
+        else
+          frame_ram_en         <= '1';
+          frame_addr_in        <= frame_addr_in + 1;
+          frame_bits_remaining <= frame_bits_remaining - FRAME_RAM_DATA_WIDTH;
         end if;
+
       end if ldpc_append_addr_ctrl;
 
       -- AXI LDPC table control
-      if table_dv = '1' then
-        table_offset    <= s_ldpc_offset;
+      if s_ldpc_dv = '1' then
+        has_table_data     := True;
+
+        table_offset       <= s_ldpc_offset;
         table_handle_ready <= '0';
+        frame_addr_in      <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
 
-        has_ldpc_data   := True;
-
-        if frame_ram_last = '0' then
-          frame_addr_in <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
+        if extract_frame_data = '0' and s_ldpc_next = '1' then
+          axi_bit_tready_p <= '1';
         end if;
 
-        if extract_frame_data = '0' then
-          if s_ldpc_tlast = '1' then
-            axi_bit_tready_p <= '1';
-          end if;
-        end if;
-
-        if s_ldpc_tlast = '1' and axi_bit_completed = '1' then
-          -- We'll complete the frame with enough data to complete either the short or
-          -- normal frames (16,200 or 64,800 bits respectively)
-          axi_bit_completed <= '0';
-          frame_ram_last    <= '1';
-          frame_addr_in     <= (others => '0');
+        if s_ldpc_tlast = '1' then
+          completed_table := True;
         end if;
       end if;
 
       -- AXI frame data control
       if axi_bit_dv = '1' then
-        has_axi_data        := True;
-        axi_bit_tready_p    <= '0';
+        has_axi_data     := True;
+        axi_bit_tready_p <= '0';
 
         if axi_bit_tlast = '1' then
-          axi_bit_completed <= '1';
+          completed_data := True;
         end if;
 
         -- Set the expected frame length. Data will passthrough and LDPC codes will be
@@ -443,21 +467,26 @@ begin
         end if;
       end if;
 
-      if has_axi_data and has_ldpc_data then
-        frame_ram_en    <= '1';
-        frame_bit_index <= table_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+      -- Once we completed both the table and the data, switch to extracting data from the
+      -- frame RAM
+      if completed_table and completed_data then
+        completed_table    := False;
+        completed_data     := False;
+        extract_frame_data <= '1';
       end if;
 
-      if has_axi_data then
-        has_ldpc_data   := False;
+      if has_axi_data and has_table_data then
+        frame_ram_en <= '1';
+      end if;
+
+      if encoded_wr_mask = '0' and has_axi_data then
+        has_table_data     := False;
         table_handle_ready <= '1';
       end if;
 
-      if has_ldpc_data then
-        if table_dv = '1' and s_ldpc_tlast = '0' then
-          has_axi_data    := False;
-          axi_bit_tready_p <= '1';
-        end if;
+      if has_table_data and s_ldpc_dv = '1' and s_ldpc_next = '0' then
+        has_axi_data       := False;
+        axi_bit_tready_p   <= '1';
       end if;
     end if;
   end process; -- }}
@@ -466,15 +495,14 @@ begin
     variable xored_data    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   begin
     if rst = '1' then
-      encoded_data_wr_en   <= '0';
-      encoded_data_wr_last <= '0';
-      encoded_data_wr_data <= (others => 'U');
+      encoded_wr_en    <= '0';
 
-      frame_ram_wrdata     <= (others => 'U');
+      encoded_wr_data  <= (others => 'U');
+      frame_ram_wrdata <= (others => 'U');
+
     elsif rising_edge(clk) then
 
-      encoded_data_wr_en   <= '0';
-      encoded_data_wr_last <= '0';
+      encoded_wr_en   <= '0';
 
       -- Always return the context, will change only when needed
       frame_ram_wrdata <= to_01(frame_ram_rddata);
@@ -484,28 +512,29 @@ begin
       if unsigned(frame_addr_out) = 0 then
         xored_data(0) := frame_ram_rddata(0);
       else
-        xored_data(0) := encoded_data_wr_data(FRAME_RAM_DATA_WIDTH - 1) xor frame_ram_rddata(0);
+        xored_data(0) := encoded_wr_data(FRAME_RAM_DATA_WIDTH - 1) xor frame_ram_rddata(0);
       end if;
 
       -- Handle data coming out of the frame RAM, either by using the input data of by
       -- calculating the actual final XOR'ed value
-      if frame_ram_ready = '1' and extract_frame_data = '0' then
-        frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata_sampled
-                                               xor to_01(frame_ram_rddata(frame_bit_index_i));
-      elsif frame_ram_ready = '1' and extract_frame_data = '1' then
-        -- Need to clear the RAM for the next frame
-        frame_ram_wrdata <= (others => '0');
+      if frame_ram_ready = '1' then
+        if encoded_wr_mask = '0' then
+          frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata_sampled
+                                                 xor to_01(frame_ram_rddata(frame_bit_index_i));
+        else
+          frame_ram_wrdata <= (others => '0');
+        end if;
 
+        if frame_ram_ready = '1' and extract_frame_data = '1' then
         -- Calculate the final XOR between output bits
-        for i in 1 to FRAME_RAM_DATA_WIDTH - 1 loop
-          xored_data(i) := frame_ram_rddata(i) xor xored_data(i - 1);
-        end loop;
+          for i in 1 to FRAME_RAM_DATA_WIDTH - 1 loop
+            xored_data(i) := frame_ram_rddata(i) xor xored_data(i - 1);
+          end loop;
 
-        -- Assign data out and decrement the bits consumed
-        encoded_data_wr_en   <= '1';
-        encoded_data_wr_data <= xored_data;
-      elsif frame_ram_ready = '0' and extract_frame_data = '1' then
-        frame_ram_wrdata     <= (others => '0');
+          -- Assign data out and decrement the bits consumed
+          encoded_wr_en    <= encoded_wr_mask;
+          encoded_wr_data  <= xored_data;
+        end if;
       end if;
 
     end if;
@@ -539,13 +568,13 @@ begin
         end if;
 
         if axi_bit_tready = '1' then
-          axi_bit_has_data <= '0';
+          axi_bit_has_data    <= '0';
         end if;
 
         if axi_bit_dv = '1' then
           axi_bit_has_data   <= '1';
           axi_bit_first_word <= axi_bit_tlast;
-          tdata             <= axi_bit_tdata;
+          tdata              <= axi_bit_tdata;
         end if;
 
       end if;

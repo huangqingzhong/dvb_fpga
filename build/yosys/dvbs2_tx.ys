@@ -12,6 +12,7 @@ ghdl --std=08                                                                 \
                     third_party/fpga_cores/src/common_pkg.vhd                 \
                     third_party/fpga_cores/src/sync_fifo.vhd                  \
                     third_party/fpga_cores/src/axi_stream_master_adapter.vhd  \
+                    third_party/fpga_cores/src/axi_stream_duplicate.vhd       \
                     third_party/fpga_cores/src/axi_stream_fifo.vhd            \
                     third_party/fpga_cores/src/async_fifo.vhd                 \
                     third_party/fpga_cores/src/axi_stream_width_converter.vhd \
@@ -20,7 +21,6 @@ ghdl --std=08                                                                 \
                     rtl/dvb_utils_pkg.vhd                                     \
                     rtl/bch_encoder_mux.vhd                                   \
                     rtl/axi_ldpc_encoder.vhd                                  \
-                    rtl/ldpc/ldpc_rom.vhd                                     \
                     rtl/ldpc/ldpc_pkg.vhd                                     \
                     rtl/ldpc/ldpc_tables_pkg.vhd                              \
                     rtl/dvbs2_tx.vhd                                          \

@@ -42,6 +42,7 @@ use fpga_cores.common_pkg.all;
 library fpga_cores_sim;
 use fpga_cores_sim.file_utils_pkg.all;
 use fpga_cores_sim.testbench_utils_pkg.all;
+use fpga_cores_sim.axi_stream_bfm_pkg.all;
 
 use work.dvb_sim_utils_pkg.all;
 use work.dvb_utils_pkg.all;
@@ -66,6 +67,7 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
 
   constant FILE_READER_NAME      : string := "file_reader";
   constant FILE_CHECKER_NAME     : string := "file_checker";
+  constant AXI_TABLE_BFM         : string := "axi_table";
   constant CLK_PERIOD            : time := 5 ns;
   constant ERROR_CNT_WIDTH       : integer := 8;
 
@@ -73,11 +75,17 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   -- constant LDPC_Q      : natural := 60;
   -- constant ldpc_length : natural := 64_800 - 43_200; --16200 - 12600;
 
-  constant table       : integer_2d_array_t := DVB_16200_S2_C8_T2_B6;
-  constant LDPC_Q      : natural := 10;
-  constant ldpc_length : natural := 16200 - 12600;
+  constant cfg_table       : integer_2d_array_t := DVB_16200_S2_C8_T2_B6;
+  constant cfg_LDPC_Q      : natural := 10;
+  constant cfg_ldpc_length : natural := 16200 - 12600;
 
-
+  type axi_stream_bus_t is record
+    tdata  : std_logic_vector;
+    tuser  : std_logic_vector;
+    tvalid : std_logic;
+    tready : std_logic;
+    tlast  : std_logic;
+  end record;
 
   -------------
   -- Signals --
@@ -86,6 +94,18 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   signal clk                : std_logic := '1';
   signal rst                : std_logic;
 
+  signal m_frame_cnt        : natural := 0;
+  signal m_word_cnt         : natural := 0;
+  signal m_bit_cnt          : natural := 0;
+
+  signal s_frame_cnt        : natural := 0;
+  signal s_word_cnt         : natural := 0;
+  signal s_bit_cnt          : natural := 0;
+
+  signal tdata_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
+  signal tlast_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
+  signal error_cnt          : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
+
   signal cfg_constellation  : constellation_t;
   signal cfg_frame_type     : frame_type_t;
   signal cfg_code_rate      : code_rate_t;
@@ -93,31 +113,20 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   signal tvalid_probability : real range 0.0 to 1.0 := 1.0;
   signal tready_probability : real range 0.0 to 1.0 := 1.0;
 
-  -- AXI input
-  signal m_tready           : std_logic := '1';
-  signal m_tvalid           : std_logic;
-  signal m_tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal m_tlast            : std_logic;
-  signal m_data_valid       : boolean;
+  signal axi_ldpc           : axi_stream_bus_t(tdata(numbits(max(DVB_N_LDPC)) - 1 downto 0),
+                                               tuser(numbits(max(DVB_N_LDPC)) downto 0));
 
+  -- AXI input
+  signal axi_master         : axi_stream_bus_t(tdata(DATA_WIDTH - 1 downto 0),
+                                               tuser(-1 downto 0));
   -- AXI output
-  signal s_tvalid           : std_logic;
-  signal s_tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal s_tlast            : std_logic;
-  signal s_tready           : std_logic := '1';
+  signal axi_slave          : axi_stream_bus_t(tdata(DATA_WIDTH - 1 downto 0),
+                                               tuser(-1 downto 0));
+  signal m_data_valid       : boolean;
   signal s_data_valid       : boolean;
 
   signal expected_tdata     : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal expected_tlast     : std_logic;
-  signal tdata_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
-  signal tlast_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
-  signal error_cnt          : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
-
-  signal s_ldpc_offset : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-  signal s_ldpc_tuser  : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-  signal s_ldpc_tvalid : std_logic;
-  signal s_ldpc_tlast  : std_logic;
-  signal s_ldpc_tready : std_logic := '1';
 
 begin
 
@@ -135,24 +144,43 @@ begin
       cfg_frame_type    => cfg_frame_type,
       cfg_code_rate     => cfg_code_rate,
 
-      s_ldpc_offset     => s_ldpc_offset,
-      s_ldpc_tuser      => s_ldpc_tuser,
-      s_ldpc_tvalid     => s_ldpc_tvalid,
-      s_ldpc_tlast      => s_ldpc_tlast,
-      s_ldpc_tready     => s_ldpc_tready,
+      s_ldpc_offset     => axi_ldpc.tdata,
+      s_ldpc_next       => axi_ldpc.tuser(axi_ldpc.tuser'length - 1),
+      s_ldpc_tuser      => axi_ldpc.tuser(axi_ldpc.tuser'length - 2 downto 0),
+      s_ldpc_tvalid     => axi_ldpc.tvalid,
+      s_ldpc_tlast      => axi_ldpc.tlast,
+      s_ldpc_tready     => axi_ldpc.tready,
 
       -- AXI input
-      s_tvalid          => m_tvalid,
-      s_tdata           => m_tdata,
-      s_tlast           => m_tlast,
-      s_tready          => m_tready,
+      s_tvalid          => axi_master.tvalid,
+      s_tdata           => axi_master.tdata,
+      s_tlast           => axi_master.tlast,
+      s_tready          => axi_master.tready,
 
       -- AXI output
-      m_tready          => s_tready,
-      m_tvalid          => s_tvalid,
-      m_tlast           => s_tlast,
-      m_tdata           => s_tdata);
+      m_tready          => axi_slave.tready,
+      m_tvalid          => axi_slave.tvalid,
+      m_tlast           => axi_slave.tlast,
+      m_tdata           => axi_slave.tdata);
 
+  axi_table_u : entity fpga_cores_sim.axi_stream_bfm
+    generic map (
+      NAME        => AXI_TABLE_BFM,
+      TDATA_WIDTH => axi_ldpc.tdata'length,
+      TUSER_WIDTH => axi_ldpc.tuser'length,
+      TID_WIDTH   => 0)
+    port map (
+      -- Usual ports
+      clk      => clk,
+      rst      => rst,
+      -- AXI stream output
+      m_tready => axi_ldpc.tready,
+      m_tdata  => axi_ldpc.tdata,
+      m_tuser  => axi_ldpc.tuser,
+      m_tkeep  => open,
+      m_tid    => open,
+      m_tvalid => axi_ldpc.tvalid,
+      m_tlast  => axi_ldpc.tlast);
 
   -- AXI file read
   axi_file_reader_u : entity fpga_cores_sim.axi_file_reader
@@ -168,10 +196,10 @@ begin
       tvalid_probability => tvalid_probability,
 
       -- Data output
-      m_tready           => m_tready,
-      m_tdata            => m_tdata,
-      m_tvalid           => m_tvalid,
-      m_tlast            => m_tlast);
+      m_tready           => axi_master.tready,
+      m_tdata            => axi_master.tdata,
+      m_tvalid           => axi_master.tvalid,
+      m_tlast            => axi_master.tlast);
 
   axi_file_compare_u : entity fpga_cores_sim.axi_file_compare
     generic map (
@@ -192,20 +220,20 @@ begin
       expected_tdata     => expected_tdata,
       expected_tlast     => expected_tlast,
       -- Data input
-      s_tready           => s_tready,
-      s_tdata            => s_tdata,
-      s_tvalid           => s_tvalid,
-      s_tlast            => s_tlast);
+      s_tready           => axi_slave.tready,
+      s_tdata            => axi_slave.tdata,
+      s_tvalid           => axi_slave.tvalid,
+      s_tlast            => axi_slave.tlast);
 
   ------------------------------
   -- Asynchronous assignments --
   ------------------------------
   clk <= not clk after CLK_PERIOD/2;
 
-  test_runner_watchdog(runner, 250 us);
+  test_runner_watchdog(runner, 2500 us);
 
-  m_data_valid <= m_tvalid = '1' and m_tready = '1';
-  s_data_valid <= s_tvalid = '1' and s_tready = '1';
+  m_data_valid <= axi_master.tvalid = '1' and axi_master.tready = '1';
+  s_data_valid <= axi_slave.tvalid = '1' and axi_slave.tready = '1';
 
   ---------------
   -- Processes --
@@ -291,28 +319,27 @@ begin
     show(display_handler, debug);
 
     while test_suite loop
-      rst <= '1';
-      walk(4);
-      rst <= '0';
-      walk(4);
-
+      rst                <= '1';
       tvalid_probability <= 1.0;
       tready_probability <= 1.0;
 
-      -- set_timeout(runner, configs'length * NUMBER_OF_TEST_FRAMES * 500 us);
+      walk(32);
+
+      rst <= '0';
+
+      walk(32);
 
       if run("back_to_back") then
         tvalid_probability <= 1.0;
         tready_probability <= 1.0;
 
         for i in configs'range loop
-          run_test(configs(i), number_of_frames => 1);
+          run_test(configs(i), number_of_frames => 2);
         end loop;
 
         wait_for_transfers(configs'length);
 
         walk(128);
-
 
       elsif run("slow_master") then
         tvalid_probability <= 0.5;
@@ -376,12 +403,12 @@ begin
     cfg_constellation <= pop(cfg_msg);
     cfg_frame_type    <= pop(cfg_msg);
     cfg_code_rate     <= pop(cfg_msg);
-    wait until m_data_valid and m_tlast = '0' and rising_edge(clk);
+    wait until m_data_valid and axi_master.tlast = '0' and rising_edge(clk);
     cfg_constellation <= not_set;
     cfg_frame_type    <= not_set;
     cfg_code_rate     <= not_set;
 
-    wait until m_data_valid and m_tlast = '1';
+    wait until m_data_valid and axi_master.tlast = '1';
 
     -- When this is received, the file reader has finished reading the file
     wait_file_read(net, file_reader);
@@ -400,74 +427,206 @@ begin
     constant self : actor_t := new_actor("ldpc_table_p");
     constant main : actor_t := find("main");
     variable msg  : msg_t;
+    variable bfm  : axi_stream_bfm_t := create_bfm(AXI_TABLE_BFM);
 
-    ------------------------------------------------------------------
-    procedure write_cell (
-      constant offset : natural;
-      constant tuser  : natural;
-      constant last   : boolean := False) is
-    begin
-      s_ldpc_offset <= std_logic_vector(to_unsigned(offset, s_ldpc_offset'length));
-      s_ldpc_tuser  <= std_logic_vector(to_unsigned(tuser, s_ldpc_tuser'length));
-      s_ldpc_tvalid <= '1';
-      if last then
-        s_ldpc_tlast <= '1';
-      end if;
+    subtype data_array_t is data_tuple_array_t(open)(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
 
-      wait until s_ldpc_tvalid = '1' and s_ldpc_tready = '1' and rising_edge(clk);
+    -- ------------------------------------------------------------------
+    -- procedure write_cell (
+    --   constant offset    : natural;
+    --   constant tuser     : std_logic_vector;
+    --   constant last      : boolean := False) is
+    -- begin
+    --   axi_ldpc.tdata   <= std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length));
+    --   axi_ldpc.tuser   <= tuser;
+    --   axi_ldpc.tvalid  <= '1';
+    --   if last then
+    --     axi_ldpc.tlast <= '1';
+    --   end if;
 
-      s_ldpc_offset <= (others => 'U');
-      s_ldpc_tuser  <= (others => 'U');
-      s_ldpc_tvalid <= '0';
-      s_ldpc_tlast  <= '0';
-    end;
+    --   wait until axi_ldpc.tvalid = '1' and axi_ldpc.tready = '1' and rising_edge(clk);
 
-    ------------------------------------------------------------------
-    procedure write_config ( constant msg : msg_t ) is
-      constant constellation : constellation_t    := pop(msg);
-      constant frame_type    : frame_type_t       := pop(msg);
-      constant code_rate     : code_rate_t        := pop(msg);
-      -- -- TODO: Table should be retrieved from above parameters
-      -- constant table         : integer_2d_array_t := DVB_64800_S2_B6;
-      constant lines         : natural            := table'length;
-      variable bit_index     : natural            := 0;
+    --   axi_ldpc.tdata  <= (others => 'U');
+    --   axi_ldpc.tuser  <= (others => 'U');
+    --   axi_ldpc.tvalid <= '0';
+    --   axi_ldpc.tlast  <= '0';
+    -- end;
 
-      ------------------------------------------------------------------
-      procedure write_line(
-        constant q         : natural;
-        constant L         : fpga_cores.common_pkg.integer_array_t) is
-        constant rows      : natural := L(0);
+    -- ------------------------------------------------------------------
+    -- procedure write_config ( constant msg : msg_t ) is
+    --   constant constellation : constellation_t := pop(msg);
+    --   constant frame_type    : frame_type_t    := pop(msg);
+    --   constant code_rate     : code_rate_t     := pop(msg);
+    --   -- -- TODO: Table should be retrieved from above parameters
+    --   constant table         : integer_2d_array_t := cfg_table;
+    --   constant LDPC_Q        : natural            := cfg_LDPC_Q;
+    --   constant ldpc_length   : natural            := cfg_ldpc_length;
+
+    --   variable table_line    : natural            := 0;
+    --   variable bit_index     : natural            := 0;
+    --   variable dbg_enough        : boolean            := False;
+
+    --   ------------------------------------------------------------------
+    --   procedure populate_table(
+    --     constant q     : natural;
+    --     constant L     : integer_vector) is
+    --     constant rows  : natural := L(0);
+    --     variable value : natural;
+    --     variable msg   : line;
+    --     variable tuser : std_logic_vector(axi_ldpc.tuser'range);
+    --   begin
+    --     -- info(sformat("Line has %d rows", fo(rows)));
+    --     for group_cnt in 0 to 359 loop
+    --       write(msg, sformat("Group: %4d || ", fo(group_cnt)));
+    --       for cell in 1 to rows loop
+    --         value := (L(cell) + (bit_index mod 360) * q) mod ldpc_length;
+    --         write(msg, sformat("%4d ", fo(value)));
+
+    --         tuser   := from_boolean(cell = rows)
+    --                    & std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1));
+
+    --         write_cell(
+    --           value,
+    --           tuser,
+    --           last => cell = rows and table_line = table'length - 1 and group_cnt = 359
+    --         );
+
+    --       end loop;
+    --       if not dbg_enough then
+    --         -- info(msg.all);
+    --         deallocate(msg);
+    --         msg       := null;
+    --       end if;
+    --       bit_index := bit_index + 1;
+    --     end loop;
+
+    --     -- if msg /= null then
+    --     if not dbg_enough then
+    --       assert msg = null;
+    --     end if;
+    --   end;
+
+    -- begin
+    --   for i in table'range loop
+    --     -- info(sformat("Writing line %d", fo(table_line)));
+    --     table_line := i;
+    --     populate_table(q => LDPC_Q, L => table(table_line));
+    --     -- dbg_enough := True;
+    --   end loop;
+    -- end;
+
+    procedure handle_msg ( constant msg : msg_t ) is -- {{ -------------------------------------------------
+      constant constellation : constellation_t := pop(msg);
+      constant frame_type    : frame_type_t    := pop(msg);
+      constant code_rate     : code_rate_t     := pop(msg);
+
+      constant words         : natural := 12_600 * 3; --get_length_in_words(table);
+
+      variable data          : data_array_t(0 to words - 1);
+      variable data_index    : natural := 0; --range 0 to data'length - 1 := 0;
+
+      variable dbg_enough    : boolean := False;
+
+      procedure populate_table( -- {{ --------------------------------------------------------------------------
+        constant table       : integer_2d_array_t;
+        constant q           : natural;
+        constant ldpc_length : natural) is
+        variable bit_index   : natural  := 0;
+        variable rows        : natural;
+        variable offset      : natural;
+        variable msg         : line;
       begin
         -- info(sformat("Line has %d rows", fo(rows)));
-        for group_cnt in 0 to 359 loop
-          for cell in 1 to rows loop
-              write_cell((L(cell) + (bit_index mod 360) * q) mod ldpc_length, bit_index, last => cell = rows);
-  --           ptr := (table(line_no)(row) + (bit_index mod 360) * LDPC_Q) mod ldpc_length;
-            -- write_cell(L(cell) + (bit_index mod 360) * q, group_cnt, last => cell = rows);
+        for i in table'range loop
+          rows := table(i)(0);
+
+          for group_cnt in 0 to 359 loop
+            write(msg, sformat("[data_index=%5d] Group: %4d || ", fo(data_index), fo(group_cnt)));
+            for cell in 1 to rows loop
+              offset := (table(i)(cell) + (bit_index mod 360) * q) mod ldpc_length;
+              write(msg, sformat("%4d ", fo(offset)));
+
+              data(data_index) := (
+                tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
+                tuser => from_boolean(cell = rows) &
+                         std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1)));
+
+              data_index := data_index + 1;
+
+            end loop;
+
+            if not dbg_enough then
+              -- info(msg.all);
+              deallocate(msg);
+              msg := null;
+            end if;
+            bit_index := bit_index + 1;
+
           end loop;
-          bit_index := bit_index + 1;
+
+          assert dbg_enough or msg = null;
+
         end loop;
-      end;
+
+        -- error(sformat("Wrote %d entries", fo(data_index)));
+
+      end; -- }} -------------------------------------------------------------------------------------------
 
     begin
-      for table_line in table'range loop
-        -- info(sformat("Writing line %d", fo(table_line)));
-        write_line(q => LDPC_Q, L => table(table_line));
-      end loop;
-    end;
+      populate_table(table => cfg_table, q => cfg_LDPC_Q, ldpc_length => cfg_ldpc_length);
+
+      info("Sending frame to AXI BFM write");
+
+      axi_bfm_write(net,
+        bfm         => bfm,
+        data        => data,
+        probability => 1.0,
+        blocking    => True);
+    end; -- }} ---------------------------------------------------------------------------------------------
 
 
   begin
-    s_ldpc_tlast  <= '0';
-    s_ldpc_tvalid <= '0';
+    -- axi_ldpc.tlast  <= '0';
+    -- axi_ldpc.tvalid <= '0';
 
     wait until rst = '0';
 
-    -- while True loop
+    while True loop
       receive(net, self, msg);
-      write_config(msg);
-    -- end loop;
+      handle_msg(msg);
+      info("Finished writing config");
+    end loop;
 
+  end process;
+
+  cnt_p : process
+  begin
+    wait until rst = '0';
+    while True loop
+      wait until rising_edge(clk);
+
+      if s_data_valid then
+        s_word_cnt <= s_word_cnt + 1;
+        s_bit_cnt  <= s_bit_cnt + DATA_WIDTH;
+
+        if axi_slave.tlast = '1' then
+          s_word_cnt  <= 0;
+          s_bit_cnt   <= 0;
+          s_frame_cnt <= s_frame_cnt + 1;
+        end if;
+      end if;
+
+      if m_data_valid then
+        m_word_cnt <= m_word_cnt + 1;
+        m_bit_cnt  <= m_bit_cnt + DATA_WIDTH;
+
+        if axi_master.tlast = '1' then
+          m_word_cnt  <= 0;
+          m_bit_cnt   <= 0;
+          m_frame_cnt <= m_frame_cnt + 1;
+        end if;
+      end if;
+    end loop;
   end process;
 
   -- ----------------------------------------------------------------------------------------------------------
@@ -488,7 +647,7 @@ begin
   --       rows := table(line_no)(0);
 
   --       for group_cnt in 0 to 359 loop
-  --         wait until rising_edge(clk) and m_tvalid = '1' and m_tready = '1';
+  --         wait until rising_edge(clk) and axi_master.tvalid = '1' and axi_master.tready = '1';
 
   --         for row in 1 to table(line_no)'length - 1 loop
   --           ptr := (table(line_no)(row) + (bit_index mod 360) * LDPC_Q) mod ldpc_length;
@@ -499,13 +658,13 @@ begin
   --               sformat(
   --                 "bit #%d: %s => line_no=%d, row=%d, ptr = %d",
   --                 fo(bit_index),
-  --                 fo(m_tdata(0)),
+  --                 fo(axi_master.tdata(0)),
   --                 fo(line_no),
   --                 fo(row),
   --                 fo(ptr)));
   --           end if;
 
-  --           data(ptr) := m_tdata(0) xor data(ptr);
+  --           data(ptr) := axi_master.tdata(0) xor data(ptr);
 
   --         end loop;
 
@@ -513,7 +672,7 @@ begin
   --           info(logger, "                                                              ");
   --         end if;
 
-  --         if m_tlast = '1' then
+  --         if axi_master.tlast = '1' then
   --           info(
   --             logger,
   --             sformat(
@@ -585,21 +744,21 @@ begin
   ----------------------------------------------------------------------------------------------------------
   dbg_proc_array : process
     constant logger : logger_t := get_logger("dbg_proc_array");
-    variable mem    : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0);
+
+    variable mem    : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0);
 
     procedure accumulate_ldpc (
-      constant table      : in integer_2d_array_t;
-      -- variable data    : out std_logic_vector(ldpc_length - 1 downto 0)) is
-      variable data       : out std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0)) is
-      variable rows       : natural := 0;
-      variable ptr        : natural := 0;
-      variable ptr_addr   : natural := 0;
-      variable ptr_bit    : natural := 0;
-      variable bit_index  : natural := 0;
-      variable data_index : natural := 0;
-      variable data_bit : std_logic;
+      constant table            : in integer_2d_array_t;
+      variable codes            : out std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0)) is
+      variable rows             : natural := 0;
+      variable offset           : natural := 0;
+      variable offset_addr      : natural := 0;
+      variable offset_bit       : natural := 0;
+      variable input_bit_number : natural := 0;
+      variable data_index       : natural := 0;
+      variable data_bit         : std_logic;
     begin
-      data := (others => (others => '0'));
+      codes := (others => (others => '0'));
 
       for line_no in table'range loop
         rows := table(line_no)(0);
@@ -607,10 +766,10 @@ begin
         for group_cnt in 0 to 359 loop
 
           if data_index = 0 then
-            wait until rising_edge(clk) and m_tvalid = '1' and m_tready = '1';
+            wait until rising_edge(clk) and axi_master.tvalid = '1' and axi_master.tready = '1';
           end if;
 
-          data_bit := m_tdata(DATA_WIDTH - 1 - data_index);
+          data_bit := axi_master.tdata(DATA_WIDTH - 1 - data_index);
 
           if data_index = DATA_WIDTH - 1 then
             data_index := 0;
@@ -619,44 +778,47 @@ begin
           end if;
 
           for row in 1 to table(line_no)'length - 1 loop
-            ptr := (table(line_no)(row) + (bit_index mod 360) * LDPC_Q) mod ldpc_length;
+            offset := (table(line_no)(row) + (input_bit_number mod 360) * cfg_LDPC_Q) mod cfg_ldpc_length;
 
-            ptr_addr := ptr / 16;
-            ptr_bit  := ptr mod 16;
+            offset_addr := offset / 16;
+            offset_bit  := offset mod 16;
 
-            data(ptr_addr)(ptr_bit) := data_bit xor data(ptr_addr)(ptr_bit);
+            codes(offset_addr)(offset_bit) := data_bit xor codes(offset_addr)(offset_bit);
 
-            if ptr = 1078 then
+            -- if offset = 1078 then
+            if axi_master.tlast = '1' then
               debug(
                 logger,
                 sformat(
-                  "[%d] data(%d)(%d) = %r  || m_tdata = %r",
+                  "[%d] codes(%d)(%d) = %r  || axi_master.tdata = %r (offset = %d)",
                   fo(data_index),
-                  fo(ptr_addr),
-                  fo(ptr_bit),
-                  fo(data(ptr_addr)),
-                  fo(m_tdata)
+                  fo(offset_addr),
+                  fo(offset_bit),
+                  fo(codes(offset_addr)),
+                  fo(axi_master.tdata),
+                  fo(offset)
                 )
               );
             end if;
 
           end loop;
 
-          if m_tlast = '1' then
+          if axi_master.tlast = '1' then
             info(
               logger,
               sformat(
-                "Exiting at line_no=%d / %d, bit %d",
+                "Exiting at line_no=%d / %d, bit %d. Last offset was %d",
                 fo(line_no),
-                fo(table'length),
-                fo(bit_index)
+                fo(table'length - 1),
+                fo(input_bit_number),
+                fo(offset)
               )
             );
 
             return;
           end if;
 
-          bit_index := bit_index + 1;
+          input_bit_number := input_bit_number + 1;
         end loop;
 
       end loop;
@@ -666,16 +828,16 @@ begin
     --------------------------------------------------------------------------------
 
     impure function post_xor (
-      constant data : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0))
+      constant data : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0))
       return std_logic_vector_2d_t is
-      variable result : std_logic_vector_2d_t(ldpc_length/16 - 1 downto 0)(15 downto 0);
+      variable result : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0);
       variable addr   : natural;
       variable offset : natural;
     begin
 
       result := data;
 
-      for i in 1 to ldpc_length - 1 loop
+      for i in 1 to cfg_ldpc_length - 1 loop
         addr := i / 16;
         offset := i mod 16;
 
@@ -707,7 +869,7 @@ begin
     wait until rst = '0';
 
     while True loop
-      accumulate_ldpc(table, mem);
+      accumulate_ldpc(cfg_table, mem);
 
       info(logger, "Before post XOR:");
       -- for word in 0 to 7 loop

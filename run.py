@@ -324,7 +324,7 @@ def main():
 
     # Not all options are supported by all GHDL backends
     #  cli.set_compile_option("ghdl.flags", ["-frelaxed-rules"])
-    #  cli.set_compile_option("ghdl.flags", ["-frelaxed-rules", "-O0", "-g"])
+    cli.set_sim_option("ghdl.elab_flags", ["-frelaxed-rules"])
     cli.set_compile_option("ghdl.flags", ["-frelaxed-rules", "-O2", "-g"])
 
     # Make components not bound (error 3473) an error

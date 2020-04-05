@@ -58,7 +58,7 @@ architecture dvbs2_tx of dvbs2_tx is
   ---------------
   -- Constants --
   ---------------
-  constant CHAIN_LENGTH : positive := 4;
+  constant CHAIN_LENGTH : positive := 5;
 
   -----------
   -- Types --
@@ -146,7 +146,7 @@ begin
       m_tlast        => tlast(2),
       m_tdata        => tdata(2));
 
-  bit_interleaver_config_fifo_u : entity work.config_fifo
+  ldpc_encoder_cfg_fifo_u : entity work.config_fifo
     generic map ( FIFO_DEPTH => 4 )
     port map (
       -- Usual ports
@@ -167,7 +167,7 @@ begin
       frame_type_o    => frame_type(2),
       code_rate_o     => code_rate(2));
 
-  bit_interleaver_u : entity work.axi_bit_interleaver
+  ldpc_encoder_u : entity work.axi_ldpc_encoder
     generic map (DATA_WIDTH => DATA_WIDTH)
     port map (
       -- Usual ports
@@ -175,8 +175,15 @@ begin
       rst               => rst,
 
       cfg_frame_type    => frame_type(2),
-      cfg_constellation => constellation(2),
       cfg_code_rate     => code_rate(2),
+      cfg_constellation => constellation(2),
+
+      s_ldpc_tready     => open,
+      s_ldpc_tvalid     => '1',
+      s_ldpc_offset     => (others => '0'),
+      s_ldpc_next       => '1',
+      s_ldpc_tuser      => (others => '0'),
+      s_ldpc_tlast      => '0',
 
       -- AXI input
       s_tvalid          => tvalid(2),
@@ -189,6 +196,50 @@ begin
       m_tvalid          => tvalid(3),
       m_tlast           => tlast(3),
       m_tdata           => tdata(3));
+
+  bit_interleaver_config_fifo_u : entity work.config_fifo
+    generic map ( FIFO_DEPTH => 4 )
+    port map (
+      -- Usual ports
+      clk             => clk,
+      rst             => rst,
+
+      -- Write side
+      wr_en           => cfg_sample_en(2),
+      full            => open,
+      constellation_i => constellation(2),
+      frame_type_i    => frame_type(2),
+      code_rate_i     => code_rate(2),
+
+      -- Read side
+      rd_en           => cfg_sample_en(3),
+      empty           => open,
+      constellation_o => constellation(3),
+      frame_type_o    => frame_type(3),
+      code_rate_o     => code_rate(3));
+
+  bit_interleaver_u : entity work.axi_bit_interleaver
+    generic map (DATA_WIDTH => DATA_WIDTH)
+    port map (
+      -- Usual ports
+      clk               => clk,
+      rst               => rst,
+
+      cfg_frame_type    => frame_type(3),
+      cfg_constellation => constellation(3),
+      cfg_code_rate     => code_rate(3),
+
+      -- AXI input
+      s_tvalid          => tvalid(3),
+      s_tdata           => tdata(3),
+      s_tlast           => tlast(3),
+      s_tready          => tready(3),
+
+      -- AXI output
+      m_tready          => tready(4),
+      m_tvalid          => tvalid(4),
+      m_tlast           => tlast(4),
+      m_tdata           => tdata(4));
 
   ------------------------------
   -- Asynchronous assignments --
