@@ -110,7 +110,8 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   signal cfg_frame_type     : frame_type_t;
   signal cfg_code_rate      : code_rate_t;
 
-  signal tvalid_probability : real range 0.0 to 1.0 := 1.0;
+  signal data_probability   : real range 0.0 to 1.0 := 1.0;
+  signal table_probability  : real range 0.0 to 1.0 := 1.0;
   signal tready_probability : real range 0.0 to 1.0 := 1.0;
 
   signal axi_ldpc           : axi_stream_bus_t(tdata(numbits(max(DVB_N_LDPC)) - 1 downto 0),
@@ -118,10 +119,10 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
 
   -- AXI input
   signal axi_master         : axi_stream_bus_t(tdata(DATA_WIDTH - 1 downto 0),
-                                               tuser(-1 downto 0));
+                                               tuser(0 downto 0));
   -- AXI output
   signal axi_slave          : axi_stream_bus_t(tdata(DATA_WIDTH - 1 downto 0),
-                                               tuser(-1 downto 0));
+                                               tuser(0 downto 0));
   signal m_data_valid       : boolean;
   signal s_data_valid       : boolean;
 
@@ -193,7 +194,7 @@ begin
       rst                => rst,
       -- Config and status
       completed          => open,
-      tvalid_probability => tvalid_probability,
+      tvalid_probability => data_probability,
 
       -- Data output
       m_tready           => axi_master.tready,
@@ -230,7 +231,7 @@ begin
   ------------------------------
   clk <= not clk after CLK_PERIOD/2;
 
-  test_runner_watchdog(runner, 2500 us);
+  test_runner_watchdog(runner, 25000 us);
 
   m_data_valid <= axi_master.tvalid = '1' and axi_master.tready = '1';
   s_data_valid <= axi_slave.tvalid = '1' and axi_slave.tready = '1';
@@ -243,6 +244,9 @@ begin
     constant input_cfg_p  : actor_t := find("input_cfg_p");
     variable file_checker : file_reader_t := new_file_reader(FILE_CHECKER_NAME);
 
+    variable table_bfm    : axi_stream_bfm_t := create_bfm(AXI_TABLE_BFM);
+    subtype data_array_t is data_tuple_array_t(open)(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
+
     procedure walk(constant steps : natural) is -- {{ ----------------------------------
     begin
       if steps /= 0 then
@@ -252,11 +256,77 @@ begin
       end if;
     end procedure walk; -- }} ----------------------------------------------------------
 
+    procedure write_ldpc_table ( -- {{ --------------------------------------------------
+      constant config : config_t
+    ) is
+      constant words         : natural := 12_600 * 3; --get_length_in_words(table);
+
+      variable data          : data_array_t(0 to words - 1);
+      variable data_index    : natural := 0; --range 0 to data'length - 1 := 0;
+
+      variable dbg_enough    : boolean := False;
+
+      procedure populate_table( -- {{ --------------------------------------------------
+        constant table       : integer_2d_array_t;
+        constant q           : natural;
+        constant ldpc_length : natural) is
+        variable bit_index   : natural  := 0;
+        variable rows        : natural;
+        variable offset      : natural;
+        variable msg         : line;
+      begin
+        -- info(sformat("Line has %d rows", fo(rows)));
+        for i in table'range loop
+          rows := table(i)(0);
+
+          for group_cnt in 0 to 359 loop
+            write(msg, sformat("[data_index=%5d] Group: %4d || ", fo(data_index), fo(group_cnt)));
+            for cell in 1 to rows loop
+              offset := (table(i)(cell) + (bit_index mod 360) * q) mod ldpc_length;
+              write(msg, sformat("%4d ", fo(offset)));
+
+              data(data_index) := (
+                tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
+                tuser => from_boolean(cell = rows) &
+                         std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1)));
+
+              data_index := data_index + 1;
+
+            end loop;
+
+            if not dbg_enough then
+              -- info(msg.all);
+              deallocate(msg);
+              msg := null;
+            end if;
+            bit_index := bit_index + 1;
+
+          end loop;
+
+          assert dbg_enough or msg = null;
+
+        end loop;
+
+        -- error(sformat("Wrote %d entries", fo(data_index)));
+
+      end; -- }} -----------------------------------------------------------------------
+
+    begin
+      populate_table(table => cfg_table, q => cfg_LDPC_Q, ldpc_length => cfg_ldpc_length);
+
+      info("Sending frame to AXI BFM write");
+
+      axi_bfm_write(net,
+        bfm         => table_bfm,
+        data        => data,
+        probability => table_probability,
+        blocking    => False);
+    end procedure; -- }} ---------------------------------------------------------------
+
     procedure run_test ( -- {{ ---------------------------------------------------------
       constant config           : config_t;
       constant number_of_frames : in positive) is
       variable file_reader_msg  : msg_t;
-      variable ldpc_table_msg   : msg_t;
     begin
 
       info("Running test with:");
@@ -278,15 +348,7 @@ begin
 
         send(net, input_cfg_p, file_reader_msg);
 
-        -- Table write message
-        ldpc_table_msg := new_msg;
-        ldpc_table_msg.sender := self;
-
-        push(ldpc_table_msg, config.constellation);
-        push(ldpc_table_msg, config.frame_type);
-        push(ldpc_table_msg, config.code_rate);
-
-        send(net, find("ldpc_table_p"), ldpc_table_msg);
+        write_ldpc_table(config);
 
         enqueue_file(
           net,
@@ -304,12 +366,10 @@ begin
     ) is
       variable msg : msg_t;
     begin
-      -- Will get one response for each frame from the file checker and one for the input
-      -- config. The order shouldn't matter
       receive(net, self, msg);
-      -- Failure(sformat("Got reply from '%s'", name(msg.sender)));
-
       wait_all_read(net, file_checker);
+
+      join(net, table_bfm);
     end procedure wait_for_transfers; -- }} --------------------------------------------
 
   begin
@@ -319,7 +379,8 @@ begin
 
     while test_suite loop
       rst                <= '1';
-      tvalid_probability <= 1.0;
+      data_probability   <= 1.0;
+      table_probability  <= 1.0;
       tready_probability <= 1.0;
 
       walk(32);
@@ -329,7 +390,8 @@ begin
       walk(32);
 
       if run("back_to_back") then
-        tvalid_probability <= 1.0;
+        data_probability   <= 1.0;
+        table_probability  <= 1.0;
         tready_probability <= 1.0;
 
         for i in configs'range loop
@@ -340,8 +402,9 @@ begin
 
         walk(128);
 
-      elsif run("slow_master") then
-        tvalid_probability <= 0.5;
+      elsif run("data=0.5,table=1.0,slave=1.0") then
+        data_probability   <= 0.5;
+        table_probability  <= 1.0;
         tready_probability <= 1.0;
 
         for i in configs'range loop
@@ -349,8 +412,9 @@ begin
         end loop;
         wait_for_transfers(configs'length);
 
-      elsif run("slow_slave") then
-        tvalid_probability <= 1.0;
+      elsif run("data=1.0,table=1.0,slave=0.5") then
+        data_probability   <= 1.0;
+        table_probability  <= 1.0;
         tready_probability <= 0.5;
 
         for i in configs'range loop
@@ -358,9 +422,40 @@ begin
         end loop;
         wait_for_transfers(configs'length);
 
-      elsif run("both_slow") then
-        tvalid_probability <= 0.75;
+      elsif run("data=0.75,table=1.0,slave=0.75") then
+        data_probability   <= 0.75;
+        table_probability  <= 1.0;
         tready_probability <= 0.75;
+
+        for i in configs'range loop
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
+        end loop;
+        wait_for_transfers(configs'length);
+
+      elsif run("data=1.0,table=0.5,slave=1.0") then
+        data_probability   <= 1.0;
+        table_probability  <= 0.5;
+        tready_probability <= 1.0;
+
+        for i in configs'range loop
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
+        end loop;
+        wait_for_transfers(configs'length);
+
+      elsif run("data=1.0,table=0.75,slave=0.75") then
+        data_probability   <= 1.0;
+        table_probability  <= 0.75;
+        tready_probability <= 0.75;
+
+        for i in configs'range loop
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
+        end loop;
+        wait_for_transfers(configs'length);
+
+      elsif run("data=0.8,table=0.8,slave=0.8") then
+        data_probability   <= 0.8;
+        table_probability  <= 0.8;
+        tready_probability <= 0.8;
 
         for i in configs'range loop
           run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
@@ -421,98 +516,6 @@ begin
     end if;
     -- check_equal(error_cnt, 0);
   end process; -- }}
-
-  ldpc_table_p : process -- {{ ---------------------------------------------------------
-    constant self : actor_t := new_actor("ldpc_table_p");
-    constant main : actor_t := find("main");
-    variable msg  : msg_t;
-    variable bfm  : axi_stream_bfm_t := create_bfm(AXI_TABLE_BFM);
-
-    subtype data_array_t is data_tuple_array_t(open)(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
-
-    procedure handle_msg ( constant msg : msg_t ) is -- {{ -----------------------------
-      constant constellation : constellation_t := pop(msg);
-      constant frame_type    : frame_type_t    := pop(msg);
-      constant code_rate     : code_rate_t     := pop(msg);
-
-      constant words         : natural := 12_600 * 3; --get_length_in_words(table);
-
-      variable data          : data_array_t(0 to words - 1);
-      variable data_index    : natural := 0; --range 0 to data'length - 1 := 0;
-
-      variable dbg_enough    : boolean := False;
-
-      procedure populate_table( -- {{ --------------------------------------------------
-        constant table       : integer_2d_array_t;
-        constant q           : natural;
-        constant ldpc_length : natural) is
-        variable bit_index   : natural  := 0;
-        variable rows        : natural;
-        variable offset      : natural;
-        variable msg         : line;
-      begin
-        -- info(sformat("Line has %d rows", fo(rows)));
-        for i in table'range loop
-          rows := table(i)(0);
-
-          for group_cnt in 0 to 359 loop
-            write(msg, sformat("[data_index=%5d] Group: %4d || ", fo(data_index), fo(group_cnt)));
-            for cell in 1 to rows loop
-              offset := (table(i)(cell) + (bit_index mod 360) * q) mod ldpc_length;
-              write(msg, sformat("%4d ", fo(offset)));
-
-              data(data_index) := (
-                tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
-                tuser => from_boolean(cell = rows) &
-                         std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1)));
-
-              data_index := data_index + 1;
-
-            end loop;
-
-            if not dbg_enough then
-              -- info(msg.all);
-              deallocate(msg);
-              msg := null;
-            end if;
-            bit_index := bit_index + 1;
-
-          end loop;
-
-          assert dbg_enough or msg = null;
-
-        end loop;
-
-        -- error(sformat("Wrote %d entries", fo(data_index)));
-
-      end; -- }} -----------------------------------------------------------------------
-
-    begin
-      populate_table(table => cfg_table, q => cfg_LDPC_Q, ldpc_length => cfg_ldpc_length);
-
-      info("Sending frame to AXI BFM write");
-
-      axi_bfm_write(net,
-        bfm         => bfm,
-        data        => data,
-        probability => 1.0,
-        blocking    => True);
-    end; -- }} -------------------------------------------------------------------------
-
-
-  begin
-    -- axi_ldpc.tlast  <= '0';
-    -- axi_ldpc.tvalid <= '0';
-
-    wait until rst = '0';
-
-    while True loop
-      receive(net, self, msg);
-      handle_msg(msg);
-      info("Finished writing config");
-    end loop;
-
-  end process; -- }} -------------------------------------------------------------------
 
   cnt_p : process -- {{ ----------------------------------------------------------------
   begin
