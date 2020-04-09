@@ -245,7 +245,15 @@ begin
     variable file_checker : file_reader_t := new_file_reader(FILE_CHECKER_NAME);
 
     variable table_bfm    : axi_stream_bfm_t := create_bfm(AXI_TABLE_BFM);
-    subtype data_array_t is data_tuple_array_t(open)(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
+
+    subtype data_tuple_constr_t
+      is data_tuple_t(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
+
+    subtype data_tuple_array_constr_t
+      is data_tuple_array_t(open)(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
+
+    -- It's not trivial to determine the length of the AXI frame, so we'll use a linked list
+    package data_array_pkg is new fpga_cores_sim.linked_list_pkg generic map (type_t => data_tuple_constr_t);
 
     procedure walk(constant steps : natural) is -- {{ ----------------------------------
     begin
@@ -259,60 +267,84 @@ begin
     procedure write_ldpc_table ( -- {{ --------------------------------------------------
       constant config : config_t
     ) is
-      constant words         : natural := 12_600 * 3; --get_length_in_words(table);
-
-      variable data          : data_array_t(0 to words - 1);
-      variable data_index    : natural := 0; --range 0 to data'length - 1 := 0;
 
       variable dbg_enough    : boolean := False;
 
-      procedure populate_table( -- {{ --------------------------------------------------
+      impure function get_axi_table_data( -- {{ ----------------------------------------
         constant table       : integer_2d_array_t;
         constant q           : natural;
-        constant ldpc_length : natural) is
-        variable bit_index   : natural  := 0;
-        variable rows        : natural;
-        variable offset      : natural;
-        variable msg         : line;
-      begin
-        -- info(sformat("Line has %d rows", fo(rows)));
-        for i in table'range loop
-          rows := table(i)(0);
+        constant ldpc_length : natural) return data_tuple_array_constr_t is
+        variable list        : data_array_pkg.linked_list_t;
 
-          for group_cnt in 0 to 359 loop
-            write(msg, sformat("[data_index=%5d] Group: %4d || ", fo(data_index), fo(group_cnt)));
-            for cell in 1 to rows loop
-              offset := (table(i)(cell) + (bit_index mod 360) * q) mod ldpc_length;
-              write(msg, sformat("%4d ", fo(offset)));
+        impure function populate_list return integer is -- {{ --------------------------
+          variable bit_index : natural  := 0;
+          variable rows      : natural;
+          variable offset    : natural;
+          -- variable msg       : line;
 
-              data(data_index) := (
-                tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
-                tuser => from_boolean(cell = rows) &
-                         std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1)));
+          variable item      : data_tuple_constr_t;
 
-              data_index := data_index + 1;
+        begin
+          -- info(sformat("Line has %d rows", fo(rows)));
+          for i in table'range loop
+            rows := table(i)(0);
+
+            for group_cnt in 0 to 359 loop
+              -- write(msg, sformat("[items=%5d] Group: %4d || ", fo(list.size), fo(group_cnt)));
+              for cell in 1 to rows loop
+                offset := (table(i)(cell) + (bit_index mod 360) * q) mod ldpc_length;
+                -- write(msg, sformat("%4d ", fo(offset)));
+
+                item := (
+                  tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
+                  tuser => from_boolean(cell = rows) &
+                           std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1)));
+
+                list.push_back(item);
+
+              end loop;
+
+              -- if not dbg_enough then
+              --   info(msg.all);
+              --   deallocate(msg);
+              --   msg := null;
+              -- end if;
+
+              bit_index := bit_index + 1;
 
             end loop;
 
-            if not dbg_enough then
-              -- info(msg.all);
-              deallocate(msg);
-              msg := null;
-            end if;
-            bit_index := bit_index + 1;
-
+            -- assert dbg_enough or msg = null;
           end loop;
 
-          assert dbg_enough or msg = null;
+          return list.size;
+        end function; -- }} ------------------------------------------------------------
 
+        -- Populate the list to get its actual length, then read from the
+        -- linked list to fill it
+        constant words  : natural := populate_list;
+        variable result : data_tuple_array_constr_t(0 to words - 1);
+
+      begin
+
+        warning(sformat("list has %d items", fo(list.size)));
+
+        for i in 0 to words - 1 loop
+          result(i) := list.pop_front;
         end loop;
 
-        -- error(sformat("Wrote %d entries", fo(data_index)));
+        assert list.empty;
+
+        return result;
 
       end; -- }} -----------------------------------------------------------------------
 
+      constant data : data_tuple_array_constr_t := get_axi_table_data(
+        table       => cfg_table,
+        q           => cfg_LDPC_Q,
+        ldpc_length => cfg_ldpc_length);
+
     begin
-      populate_table(table => cfg_table, q => cfg_LDPC_Q, ldpc_length => cfg_ldpc_length);
 
       info("Sending frame to AXI BFM write");
 
