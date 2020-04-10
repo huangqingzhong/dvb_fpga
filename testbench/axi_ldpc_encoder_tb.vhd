@@ -271,11 +271,9 @@ begin
 
       variable dbg_enough    : boolean := False;
 
-      impure function get_axi_table_data( -- {{ ----------------------------------------
-        constant table       : integer_2d_array_t;
-        constant q           : natural;
-        constant ldpc_length : natural) return data_tuple_array_constr_t is
-        variable list        : data_array_pkg.linked_list_t;
+      impure function get_axi_table_data return data_tuple_array_constr_t is -- {{ -----
+        constant table : ldpc_table_t := get_ldpc_table(config.frame_type, config.code_rate);
+        variable list  : data_array_pkg.linked_list_t;
 
         impure function populate_list return integer is -- {{ --------------------------
           variable bit_index : natural  := 0;
@@ -283,13 +281,13 @@ begin
           variable offset    : natural;
         begin
           -- info(sformat("Line has %d rows", fo(rows)));
-          for i in table'range loop
-            rows := table(i)(0);
+          for i in table.data'range loop
+            rows := table.data(i)(0);
 
             for group_cnt in 0 to 359 loop
               -- write(msg, sformat("[items=%5d] Group: %4d || ", fo(list.size), fo(group_cnt)));
               for cell in 1 to rows loop
-                offset := (table(i)(cell) + (bit_index mod 360) * q) mod ldpc_length;
+                offset := (table.data(i)(cell) + (bit_index mod 360) * table.q) mod table.length;
                 -- write(msg, sformat("%4d ", fo(offset)));
 
                 list.push_back(
@@ -299,7 +297,6 @@ begin
                              std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1))
                   )
                 );
-
 
               end loop;
 
@@ -338,10 +335,7 @@ begin
 
       end; -- }} -----------------------------------------------------------------------
 
-      constant data : data_tuple_array_constr_t := get_axi_table_data(
-        table       => cfg_table,
-        q           => cfg_LDPC_Q,
-        ldpc_length => cfg_ldpc_length);
+      constant data : data_tuple_array_constr_t := get_axi_table_data;
 
     begin
 
@@ -499,7 +493,7 @@ begin
 
       check_false(has_message(input_cfg_p));
 
-      -- check_equal(error_cnt, 0);
+      check_equal(error_cnt, 0);
 
       walk(32);
 

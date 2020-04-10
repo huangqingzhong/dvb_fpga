@@ -1715,7 +1715,7 @@ package ldpc_tables_pkg is
 
 
   type ldpc_table_t is record
-    table  : integer_2d_array_t;
+    data   : integer_2d_array_t;
     q      : natural;
     length : natural;
   end record;
@@ -1789,7 +1789,7 @@ package body ldpc_tables_pkg is
     return result;
   end function;
 
-  function get_ldpc_uncoded_length (
+  function get_ldpc_code_length (
     constant frame_type : in frame_type_t;
     constant code_rate  : in code_rate_t) return natural is
     variable result     : natural;
@@ -1817,7 +1817,12 @@ package body ldpc_tables_pkg is
     if frame_type = fecframe_short  and code_rate = C5_6   then result := 13_320;  end if;
     if frame_type = fecframe_short  and code_rate = C8_9   then result := 14_400;  end if;
 
-    return result;
+    if frame_type = fecframe_normal then
+      return FECFRAME_NORMAL_BIT_LENGHT - result;
+    end if;
+
+    return FECFRAME_SHORT_BIT_LENGTH - result;
+
   end function;
 
   function get_ldpc_table (
@@ -1825,9 +1830,9 @@ package body ldpc_tables_pkg is
     constant code_rate  : in code_rate_t)
   return ldpc_table_t is
   begin
-    return (table  => get_table(frame_type, code_rate),
+    return (data   => get_table(frame_type, code_rate),
             q      => get_q(frame_type, code_rate),
-            length => get_ldpc_uncoded_length(frame_type, code_rate));
+            length => get_ldpc_code_length(frame_type, code_rate));
   end function;
 
 

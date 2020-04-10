@@ -126,7 +126,7 @@ package body dvb_sim_utils_pkg is
 
     for i in 0 to cfg_strings'length - 1 loop
       cfg_items := split(cfg_strings(i).all, ",");
-      
+
       if cfg_items'length /= 5 then
         failure("Malformed config string " & quote(cfg_strings(i).all));
       end if;
@@ -167,7 +167,7 @@ package body dvb_sim_utils_pkg is
 
     for i in 0 to cfg_strings'length - 1 loop
       cfg_items := split(cfg_strings(i).all, ",");
-      
+
       if cfg_items'length /= 2 then
         failure("Malformed config string " & quote(cfg_strings(i).all));
       end if;
