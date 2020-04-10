@@ -116,7 +116,7 @@ class LdpcTable:
 
     def _getWidthArray(self):
         return (
-            f"constant {self.name.upper()}_COLUMN_WIDTHS : integer_array_t := ("
+            f"constant {self.name.upper()}_COLUMN_WIDTHS : integer_vector := ("
             + ", ".join(
                 ["%d => %d" % (key, value) for key, value in self._widths.items()]
             )
@@ -142,20 +142,23 @@ class LdpcTable:
 
         depth = len(self._table)
         width = sum(self._widths.values())
+
         brams_18k = max((width + 17) // 18, depth * width / 1024 / 18)
         brams_36k = max((width + 35) // 36, depth * width / 1024 / 36)
+
+        columns = len(self._widths)
 
         lines = [
             f"  -- From {self._path}, table is {depth}x{width} ({depth*width/8.} bytes)",
             f"  -- Resource estimation: {brams_18k} x 18 kB BRAMs or {brams_36k} x 36 kB BRAMs",
             f"  {self._getWidthArray()}",
             "",
-            f"  constant {self.name.upper()} : integer_2d_array_t := (",
+            f"  constant {self.name.upper()} : integer_2d_array_t(0 to {depth - 1})(0 to {columns - 1}) := (",
         ]
 
         for i, line in enumerate(self._table):
 
-            this_line = f"    {i} => integer_array_t'({self._renderRamLine(line)})"
+            this_line = f"    {i} => integer_vector'({self._renderRamLine(line)})"
             if i < depth - 1:
                 lines.append(f"{this_line},")
             else:
@@ -185,7 +188,8 @@ def main():
             "use ieee.std_logic_1164.all;",
             "use ieee.numeric_std.all;",
             "",
-            "use work.common_pkg.all;",
+            "library fpga_cores;",
+            "use fpga_cores.common_pkg.all;",
             "",
         ]
     )
@@ -225,14 +229,11 @@ def main():
         [
             "",
             "end package ldpc_tables_pkg;",
-            "",
-            "package body ldpc_tables_pkg is",
-            "end package body ldpc_tables_pkg;",
         ]
     )
 
     target_file = p.abspath(
-        p.join(root, "..", "rtl", "generated", "ldpc_tables_pkg.vhd")
+        p.join(root, "..", "rtl", "ldpc", "ldpc_tables_pkg.vhd")
     )
     if not p.exists(p.dirname(target_file)):
         makedirs(p.dirname(target_file))

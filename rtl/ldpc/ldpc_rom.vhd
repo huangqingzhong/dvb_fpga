@@ -75,9 +75,10 @@ architecture ldpc_rom of ldpc_rom is
   -------------
   -- Signals --
   -------------
-  signal dout_i : std_logic_vector(DATA_WIDTH downto 0);
-  signal q_in   : natural range 0 to 2**LDPC_Q_WIDTH - 1;
-  signal q_out  : std_logic_vector(LDPC_Q_WIDTH - 1 downto 0);
+  signal dout_i   : std_logic_vector(DATA_WIDTH downto 0);
+  signal q_in     : natural range 0 to 2**LDPC_Q_WIDTH - 1;
+  signal q_in_slv : std_logic_vector(LDPC_Q_WIDTH - 1 downto 0);
+  signal q_out    : std_logic_vector(LDPC_Q_WIDTH - 1 downto 0);
 
 begin
 
@@ -106,8 +107,10 @@ begin
     clk     => clk,
     clken   => '1',
 
-    din     => std_logic_vector(to_unsigned(q_in, LDPC_Q_WIDTH)),
+    din     => q_in_slv,
     dout    => q_out);
+
+  q_in_slv <= std_logic_vector(to_unsigned(q_in, LDPC_Q_WIDTH));
 
   ------------------------------
   -- Asynchronous assignments --

@@ -1,3 +1,4 @@
+-- vim: set foldmethod=marker foldmarker=--\ {{,--\ }} :
 --
 -- DVB FPGA
 --
@@ -280,10 +281,6 @@ begin
           variable bit_index : natural  := 0;
           variable rows      : natural;
           variable offset    : natural;
-          -- variable msg       : line;
-
-          variable item      : data_tuple_constr_t;
-
         begin
           -- info(sformat("Line has %d rows", fo(rows)));
           for i in table'range loop
@@ -295,12 +292,14 @@ begin
                 offset := (table(i)(cell) + (bit_index mod 360) * q) mod ldpc_length;
                 -- write(msg, sformat("%4d ", fo(offset)));
 
-                item := (
-                  tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
-                  tuser => from_boolean(cell = rows) &
-                           std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1)));
+                list.push_back(
+                  (
+                    tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
+                    tuser => from_boolean(cell = rows) &
+                             std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1))
+                  )
+                );
 
-                list.push_back(item);
 
               end loop;
 
@@ -860,5 +859,3 @@ begin
   end process; -- }} -------------------------------------------------------------------
 
 end axi_ldpc_encoder_tb;
-
--- vim: set foldmethod=marker foldmarker=--\ {{,--\ }} :
