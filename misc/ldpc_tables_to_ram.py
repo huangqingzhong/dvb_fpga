@@ -225,16 +225,9 @@ def main():
 
     lines += rendered_tables
 
-    lines += "\n".join(
-        [
-            "",
-            "end package ldpc_tables_pkg;",
-        ]
-    )
+    lines += "\n".join(["", "end package ldpc_tables_pkg;",])
 
-    target_file = p.abspath(
-        p.join(root, "..", "rtl", "ldpc", "ldpc_tables_pkg.vhd")
-    )
+    target_file = p.abspath(p.join(root, "..", "rtl", "ldpc", "ldpc_tables_pkg.vhd"))
     if not p.exists(p.dirname(target_file)):
         makedirs(p.dirname(target_file))
     open(target_file, "w").write(lines)

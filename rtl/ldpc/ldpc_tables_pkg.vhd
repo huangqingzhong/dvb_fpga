@@ -25,6 +25,8 @@ use ieee.numeric_std.all;
 library fpga_cores;
 use fpga_cores.common_pkg.all;
 
+use work.dvb_utils_pkg.all;
+
 
 -- Summary of statistics
 
@@ -1712,4 +1714,121 @@ package ldpc_tables_pkg is
   );
 
 
+  type ldpc_table_t is record
+    table  : integer_2d_array_t;
+    q      : natural;
+    length : natural;
+  end record;
+
+  function get_ldpc_table (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t)
+  return ldpc_table_t;
+
 end package ldpc_tables_pkg;
+
+package body ldpc_tables_pkg is
+
+  function get_table (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t)
+  return integer_2d_array_t is
+  begin
+
+    if frame_type = fecframe_short   and code_rate = C4_5  then return DVB_16200_S2_C8_T2_B6;  end if;
+    if frame_type = fecframe_short   and code_rate = C8_9  then return DVB_16200_S2_C10;       end if;
+    if frame_type = fecframe_normal  and code_rate = C8_9  then return DVB_64800_S2_B10;       end if;
+    if frame_type = fecframe_normal  and code_rate = C9_10 then return DVB_64800_S2_B11;       end if;
+    if frame_type = fecframe_short   and code_rate = C1_2  then return DVB_16200_S2_C4_T2_B2;  end if;
+    if frame_type = fecframe_normal  and code_rate = C1_2  then return DVB_64800_S2_B4_T2_A1;  end if;
+    if frame_type = fecframe_short   and code_rate = C1_4  then return DVB_16200_S2_C1_T2_B1;  end if;
+    if frame_type = fecframe_short   and code_rate = C1_3  then return DVB_16200_S2_C2_T2_B8;  end if;
+    if frame_type = fecframe_short   and code_rate = C2_5  then return DVB_16200_S2_C3_T2_B9;  end if;
+    if frame_type = fecframe_short   and code_rate = C3_5  then return DVB_16200_S2_C5;        end if;
+    if frame_type = fecframe_short   and code_rate = C2_3  then return DVB_16200_S2_C6_T2_B4;  end if;
+    if frame_type = fecframe_short   and code_rate = C3_4  then return DVB_16200_S2_C7_T2_B5;  end if;
+    if frame_type = fecframe_short   and code_rate = C5_6  then return DVB_16200_S2_C9_T2_B7;  end if;
+    if frame_type = fecframe_normal  and code_rate = C1_4  then return DVB_64800_S2_B1;        end if;
+    if frame_type = fecframe_normal  and code_rate = C1_3  then return DVB_64800_S2_B2;        end if;
+    if frame_type = fecframe_normal  and code_rate = C2_5  then return DVB_64800_S2_B3;        end if;
+    if frame_type = fecframe_normal  and code_rate = C3_5  then return DVB_64800_S2_B5_T2_A2;  end if;
+    if frame_type = fecframe_normal  and code_rate = C2_3  then return DVB_64800_S2_B6;        end if;
+    if frame_type = fecframe_normal  and code_rate = C3_4  then return DVB_64800_S2_B7_T2_A4;  end if;
+    if frame_type = fecframe_normal  and code_rate = C4_5  then return DVB_64800_S2_B8_T2_A5;  end if;
+    if frame_type = fecframe_normal  and code_rate = C5_6  then return DVB_64800_S2_B9_T2_A6;  end if;
+  end function;
+
+  function get_q (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t) return integer is
+    variable result     : natural;
+  begin
+    if frame_type = fecframe_normal  and code_rate = C1_4  then result := 135; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_3  then result := 120; end if;
+    if frame_type = fecframe_normal  and code_rate = C2_5  then result := 108; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_2  then result := 90;  end if;
+    if frame_type = fecframe_normal  and code_rate = C3_5  then result := 72;  end if;
+    if frame_type = fecframe_normal  and code_rate = C2_3  then result := 60;  end if;
+    if frame_type = fecframe_normal  and code_rate = C3_4  then result := 45;  end if;
+    if frame_type = fecframe_normal  and code_rate = C4_5  then result := 36;  end if;
+    if frame_type = fecframe_normal  and code_rate = C5_6  then result := 30;  end if;
+    if frame_type = fecframe_normal  and code_rate = C8_9  then result := 20;  end if;
+    if frame_type = fecframe_normal  and code_rate = C9_10 then result := 18;  end if;
+
+    if frame_type = fecframe_short  and code_rate = C1_4   then result := 36;   end if;
+    if frame_type = fecframe_short  and code_rate = C1_3   then result := 30;   end if;
+    if frame_type = fecframe_short  and code_rate = C2_5   then result := 27;   end if;
+    if frame_type = fecframe_short  and code_rate = C1_2   then result := 25;   end if;
+    if frame_type = fecframe_short  and code_rate = C3_5   then result := 18;   end if;
+    if frame_type = fecframe_short  and code_rate = C2_3   then result := 15;   end if;
+    if frame_type = fecframe_short  and code_rate = C3_4   then result := 12;   end if;
+    if frame_type = fecframe_short  and code_rate = C4_5   then result := 10;   end if;
+    if frame_type = fecframe_short  and code_rate = C5_6   then result := 8;    end if;
+    if frame_type = fecframe_short  and code_rate = C8_9   then result := 5;    end if;
+
+    return result;
+  end function;
+
+  function get_ldpc_uncoded_length (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t) return natural is
+    variable result     : natural;
+  begin
+    if frame_type = fecframe_normal  and code_rate = C1_4  then result := 16_200; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_3  then result := 21_600; end if;
+    if frame_type = fecframe_normal  and code_rate = C2_5  then result := 25_920; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_2  then result := 32_400; end if;
+    if frame_type = fecframe_normal  and code_rate = C3_5  then result := 38_880; end if;
+    if frame_type = fecframe_normal  and code_rate = C2_3  then result := 43_200; end if;
+    if frame_type = fecframe_normal  and code_rate = C3_4  then result := 48_600; end if;
+    if frame_type = fecframe_normal  and code_rate = C4_5  then result := 51_840; end if;
+    if frame_type = fecframe_normal  and code_rate = C5_6  then result := 54_000; end if;
+    if frame_type = fecframe_normal  and code_rate = C8_9  then result := 57_600; end if;
+    if frame_type = fecframe_normal  and code_rate = C9_10 then result := 58_320; end if;
+
+    if frame_type = fecframe_short  and code_rate = C1_4   then result :=  3_240;  end if;
+    if frame_type = fecframe_short  and code_rate = C1_3   then result :=  5_400;  end if;
+    if frame_type = fecframe_short  and code_rate = C2_5   then result :=  6_480;  end if;
+    if frame_type = fecframe_short  and code_rate = C1_2   then result :=  7_200;  end if;
+    if frame_type = fecframe_short  and code_rate = C3_5   then result :=  9_720;  end if;
+    if frame_type = fecframe_short  and code_rate = C2_3   then result := 10_800;  end if;
+    if frame_type = fecframe_short  and code_rate = C3_4   then result := 11_880;  end if;
+    if frame_type = fecframe_short  and code_rate = C4_5   then result := 12_600;  end if;
+    if frame_type = fecframe_short  and code_rate = C5_6   then result := 13_320;  end if;
+    if frame_type = fecframe_short  and code_rate = C8_9   then result := 14_400;  end if;
+
+    return result;
+  end function;
+
+  function get_ldpc_table (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t)
+  return ldpc_table_t is
+  begin
+    return (table  => get_table(frame_type, code_rate),
+            q      => get_q(frame_type, code_rate),
+            length => get_ldpc_uncoded_length(frame_type, code_rate));
+  end function;
+
+
+end package body;
