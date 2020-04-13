@@ -27,6 +27,7 @@ use ieee.numeric_std.all;
 
 library fpga_cores;
 use fpga_cores.common_pkg.all;
+use fpga_cores.axi_pkg.all;
 
 use work.dvb_utils_pkg.all;
 use work.ldpc_pkg.all;
@@ -85,20 +86,12 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal axi_ldpc_frame_type    : frame_type_t;
   signal axi_ldpc_code_rate     : code_rate_t;
 
-  signal axi_ldpc_tready        : std_logic;
-  signal axi_ldpc_tvalid        : std_logic;
-  signal axi_ldpc_tdata         : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal axi_ldpc_tlast         : std_logic;
+  signal axi_ldpc               : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
   signal axi_ldpc_dv            : std_logic;
 
-  signal axi_passthrough_tdata  : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal axi_passthrough_tvalid : std_logic;
-  signal axi_passthrough_tready : std_logic;
+  signal axi_passthrough        : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
 
-  signal axi_bit_tready         : std_logic;
-  signal axi_bit_tdata          : std_logic;
-  signal axi_bit_tvalid         : std_logic;
-  signal axi_bit_tlast          : std_logic;
+  signal axi_bit                : axi_stream_data_bus_t(tdata(0 downto 0));
 
   signal axi_bit_dv             : std_logic;
   signal axi_bit_first_word     : std_logic;
@@ -143,17 +136,11 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal encoded_wr_data        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   signal encoded_wr_last        : std_logic;
 
-  signal axi_out_tready         : std_logic;
-  signal axi_out_tdata          : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
-  signal axi_out_tvalid         : std_logic;
-  signal axi_out_tlast          : std_logic;
+  signal axi_out                : axi_stream_data_bus_t(tdata(FRAME_RAM_DATA_WIDTH - 1 downto 0));
 
-  signal output_mux_ctrl        : std_logic;
+  signal wr_encoded_data        : std_logic;
 
-  signal axi_encoded_tvalid     : std_logic;
-  signal axi_encoded_tready     : std_logic;
-  signal axi_encoded_tlast      : std_logic;
-  signal axi_encoded_tdata      : std_logic_vector(DATA_WIDTH - 1 downto 0);
+  signal axi_encoded            : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
 
   signal frame_bit_index_i      : natural range 0 to ROM_DATA_WIDTH - 1;
 
@@ -187,10 +174,11 @@ begin
                    s_tlast &
                    s_tdata;
 
-    axi_passthrough_tdata  <= extract(axi_dup0_tdata, 0, WIDTHS);
+    axi_passthrough.tdata  <= extract(axi_dup0_tdata, 0, WIDTHS);
+    axi_passthrough.tlast  <= extract(axi_dup1_tdata, 1, WIDTHS);
 
-    axi_ldpc_tdata         <= extract(axi_dup1_tdata, 0, WIDTHS);
-    axi_ldpc_tlast         <= extract(axi_dup1_tdata, 1, WIDTHS);
+    axi_ldpc.tdata         <= extract(axi_dup1_tdata, 0, WIDTHS);
+    axi_ldpc.tlast         <= extract(axi_dup1_tdata, 1, WIDTHS);
     axi_ldpc_frame_type    <= decode(extract(axi_dup1_tdata, 2, WIDTHS));
     axi_ldpc_constellation <= decode(extract(axi_dup1_tdata, 3, WIDTHS));
     axi_ldpc_code_rate     <= decode(extract(axi_dup1_tdata, 4, WIDTHS));
@@ -201,19 +189,18 @@ begin
         -- Usual ports
         clk       => clk,
         rst       => rst,
-
         -- AXI stream input
         s_tready  => s_tready,
         s_tdata   => s_tdata_agg,
         s_tvalid  => s_tvalid,
         -- AXI stream output 0
-        m0_tready => axi_passthrough_tready,
+        m0_tready => axi_passthrough.tready,
         m0_tdata  => axi_dup0_tdata,
-        m0_tvalid => axi_passthrough_tvalid,
+        m0_tvalid => axi_passthrough.tvalid,
         -- AXI stream output 1
-        m1_tready => axi_ldpc_tready,
+        m1_tready => axi_ldpc.tready,
         m1_tdata  => axi_dup1_tdata,
-        m1_tvalid => axi_ldpc_tvalid);
+        m1_tvalid => axi_ldpc.tvalid);
 
   end block; -- }} ---------------------------------------------------------------------
 
@@ -235,19 +222,19 @@ begin
         clk        => clk,
         rst        => rst,
         -- AXI stream input
-        s_tready   => axi_ldpc_tready,
-        s_tdata    => mirror_bits(axi_ldpc_tdata), -- width converter is little endian, we need big endian
-        s_tkeep    => (others => to_01(axi_ldpc_tlast)),
+        s_tready   => axi_ldpc.tready,
+        s_tdata    => mirror_bits(axi_ldpc.tdata), -- width converter is little endian, we need big endian
+        s_tkeep    => (others => to_01(axi_ldpc.tlast)),
         s_tid      => encode(axi_ldpc_frame_type),
-        s_tvalid   => axi_ldpc_tvalid,
-        s_tlast    => axi_ldpc_tlast,
+        s_tvalid   => axi_ldpc.tvalid,
+        s_tlast    => axi_ldpc.tlast,
         -- AXI stream output
-        m_tready   => axi_bit_tready,
-        m_tdata(0) => axi_bit_tdata,
+        m_tready   => axi_bit.tready,
+        m_tdata    => axi_bit.tdata,
         m_tkeep    => open,
         m_tid      => axi_bit_tid,
-        m_tvalid   => axi_bit_tvalid,
-        m_tlast    => axi_bit_tlast);
+        m_tvalid   => axi_bit.tvalid,
+        m_tlast    => axi_bit.tlast);
     end block; -- }} -------------------------------------------------------------------
 
   frame_ram_u : entity fpga_cores.pipeline_context_ram
@@ -282,10 +269,10 @@ begin
       wr_data  => encoded_wr_data,
       wr_last  => encoded_wr_last,
       -- AXI master
-      m_tvalid => axi_out_tvalid,
-      m_tready => axi_out_tready,
-      m_tdata  => axi_out_tdata,
-      m_tlast  => axi_out_tlast);
+      m_tvalid => axi_out.tvalid,
+      m_tready => axi_out.tready,
+      m_tdata  => axi_out.tdata,
+      m_tlast  => axi_out.tlast);
 
   -- Convert from FRAME_RAM_DATA_WIDTH to the specified data width
   output_width_conversion_u : entity fpga_cores.axi_stream_width_converter
@@ -298,19 +285,19 @@ begin
       clk        => clk,
       rst        => rst,
       -- AXI stream input
-      s_tready   => axi_out_tready,
-      s_tdata    => axi_out_tdata,
-      s_tkeep    => (others => axi_out_tlast),
+      s_tready   => axi_out.tready,
+      s_tdata    => axi_out.tdata,
+      s_tkeep    => (others => axi_out.tlast),
       s_tid      => (others => '0'),
-      s_tvalid   => axi_out_tvalid,
-      s_tlast    => axi_out_tlast,
+      s_tvalid   => axi_out.tvalid,
+      s_tlast    => axi_out.tlast,
       -- AXI stream output
-      m_tready   => axi_encoded_tready,
-      m_tdata    => axi_encoded_tdata,
+      m_tready   => axi_encoded.tready,
+      m_tdata    => axi_encoded.tdata,
       m_tkeep    => open,
       m_tid      => open,
-      m_tvalid   => axi_encoded_tvalid,
-      m_tlast    => axi_encoded_tlast);
+      m_tvalid   => axi_encoded.tvalid,
+      m_tlast    => axi_encoded.tlast);
 
   frame_addr_in_rst_u : entity fpga_cores.edge_detector
     generic map (
@@ -332,24 +319,25 @@ begin
   ------------------------------
   -- Values synchronized with data from pipeline_context_ram
   frame_bit_index_i      <= to_integer(unsigned(frame_bit_index));
-  s_ldpc_tready          <= table_handle_ready and (not rst and not extract_frame_data);
+  s_ldpc_tready          <= table_handle_ready and not (rst or extract_frame_data);
 
   -- AXI slave specifics
-  axi_bit_dv             <= '1' when axi_bit_tready = '1' and axi_bit_tvalid = '1' else '0';
-  axi_ldpc_dv            <= '1' when axi_ldpc_tready = '1' and axi_ldpc_tvalid = '1' else '0';
+  axi_bit_dv             <= '1' when axi_bit.tready = '1' and axi_bit.tvalid = '1' else '0';
+  axi_ldpc_dv            <= '1' when axi_ldpc.tready = '1' and axi_ldpc.tvalid = '1' else '0';
   s_ldpc_dv              <= '1' when s_ldpc_tready = '1' and s_ldpc_tvalid = '1' else '0';
-  axi_bit_tready         <= axi_bit_tready_p and not (rst or extract_frame_data);
+  axi_bit.tready         <= axi_bit_tready_p and not (rst or extract_frame_data);
 
   -- Mux output data
-  axi_encoded_tready     <= m_tready and output_mux_ctrl;
-  axi_passthrough_tready <= m_tready and not output_mux_ctrl;
-  m_tlast                <= output_mux_ctrl and axi_encoded_tlast;
+  axi_encoded.tready     <= m_tready and wr_encoded_data;
+  axi_passthrough.tready <= m_tready and not wr_encoded_data;
+  m_tlast                <= wr_encoded_data and axi_encoded.tlast;
 
-  m_tdata                <= axi_passthrough_tdata when output_mux_ctrl = '0' else
-                            mirror_bits(axi_encoded_tdata);
+  m_tdata                <= axi_passthrough.tdata when wr_encoded_data = '0' else
+                            mirror_bits(axi_encoded.tdata);
 
-  m_tvalid               <= (axi_passthrough_tvalid and axi_passthrough_tready and not output_mux_ctrl)
-                             or axi_encoded_tvalid;
+
+  m_tvalid               <= (axi_passthrough.tvalid and axi_passthrough.tready and not wr_encoded_data)
+                             or axi_encoded.tvalid;
 
   frame_in_last          <= extract_frame_data when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
                             else '0';
@@ -443,7 +431,7 @@ begin
         has_axi_data     := True;
         axi_bit_tready_p <= '0';
 
-        if axi_bit_tlast = '1' then
+        if axi_bit.tlast = '1' then
           completed_data := True;
         end if;
 
@@ -551,7 +539,8 @@ begin
     begin
       if rst = '1' then
         axi_bit_first_word    <= '1';
-        output_mux_ctrl       <= '0';
+        wr_encoded_data       <= '0';
+
         -- We don't want things muxed with rst here
         axi_bit_tdata_sampled <= 'U';
         tdata                 <= 'U';
@@ -559,22 +548,23 @@ begin
 
         axi_bit_tdata_sampled <= tdata;
 
-        if axi_ldpc_tvalid = '1' and axi_ldpc_tready = '1' and axi_ldpc_tlast = '1' then
-          output_mux_ctrl     <= '1';
+        -- Switch to
+        if axi_passthrough.tvalid = '1' and axi_passthrough.tready = '1' and axi_passthrough.tlast = '1' then
+          wr_encoded_data <= '1';
         end if;
 
-        if axi_encoded_tvalid = '1' and axi_encoded_tready = '1' and axi_encoded_tlast = '1' then
-          output_mux_ctrl     <= '0';
+        if axi_encoded.tvalid = '1' and axi_encoded.tready = '1' and axi_encoded.tlast = '1' then
+          wr_encoded_data <= '0';
         end if;
 
-        if axi_bit_tready = '1' then
+        if axi_bit.tready = '1' then
           axi_bit_has_data    <= '0';
         end if;
 
         if axi_bit_dv = '1' then
           axi_bit_has_data   <= '1';
-          axi_bit_first_word <= axi_bit_tlast;
-          tdata              <= axi_bit_tdata;
+          axi_bit_first_word <= axi_bit.tlast;
+          tdata              <= axi_bit.tdata(0);
         end if;
 
       end if;
