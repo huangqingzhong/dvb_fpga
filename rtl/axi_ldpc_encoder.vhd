@@ -136,11 +136,11 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal encoded_wr_data        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   signal encoded_wr_last        : std_logic;
 
-  signal axi_out                : axi_stream_data_bus_t(tdata(FRAME_RAM_DATA_WIDTH - 1 downto 0));
+  signal axi_encoded            : axi_stream_data_bus_t(tdata(FRAME_RAM_DATA_WIDTH - 1 downto 0));
 
   signal wr_encoded_data        : std_logic;
 
-  signal axi_encoded            : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
+  signal axi_out                : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
 
   signal frame_bit_index_i      : natural range 0 to ROM_DATA_WIDTH - 1;
 
@@ -264,15 +264,15 @@ begin
       clk      => clk,
       reset    => rst,
       -- wanna-be AXI interface
-      wr_en    => encoded_wr_en,
+      wr_en    => encoded_wr_en and encoded_wr_mask,
       wr_full  => encoded_wr_full,
       wr_data  => encoded_wr_data,
       wr_last  => encoded_wr_last,
       -- AXI master
-      m_tvalid => axi_out.tvalid,
-      m_tready => axi_out.tready,
-      m_tdata  => axi_out.tdata,
-      m_tlast  => axi_out.tlast);
+      m_tvalid => axi_encoded.tvalid,
+      m_tready => axi_encoded.tready,
+      m_tdata  => axi_encoded.tdata,
+      m_tlast  => axi_encoded.tlast);
 
   -- Convert from FRAME_RAM_DATA_WIDTH to the specified data width
   output_width_conversion_u : entity fpga_cores.axi_stream_width_converter
@@ -285,19 +285,19 @@ begin
       clk        => clk,
       rst        => rst,
       -- AXI stream input
-      s_tready   => axi_out.tready,
-      s_tdata    => axi_out.tdata,
-      s_tkeep    => (others => axi_out.tlast),
+      s_tready   => axi_encoded.tready,
+      s_tdata    => axi_encoded.tdata,
+      s_tkeep    => (others => axi_encoded.tlast),
       s_tid      => (others => '0'),
-      s_tvalid   => axi_out.tvalid,
-      s_tlast    => axi_out.tlast,
+      s_tvalid   => axi_encoded.tvalid,
+      s_tlast    => axi_encoded.tlast,
       -- AXI stream output
-      m_tready   => axi_encoded.tready,
-      m_tdata    => axi_encoded.tdata,
+      m_tready   => axi_out.tready,
+      m_tdata    => axi_out.tdata,
       m_tkeep    => open,
       m_tid      => open,
-      m_tvalid   => axi_encoded.tvalid,
-      m_tlast    => axi_encoded.tlast);
+      m_tvalid   => axi_out.tvalid,
+      m_tlast    => axi_out.tlast);
 
   frame_addr_in_rst_u : entity fpga_cores.edge_detector
     generic map (
@@ -328,16 +328,16 @@ begin
   axi_bit.tready         <= axi_bit_tready_p and not (rst or extract_frame_data);
 
   -- Mux output data
-  axi_encoded.tready     <= m_tready and wr_encoded_data;
+  axi_out.tready         <= m_tready and wr_encoded_data;
   axi_passthrough.tready <= m_tready and not wr_encoded_data;
-  m_tlast                <= wr_encoded_data and axi_encoded.tlast;
+  m_tlast                <= wr_encoded_data and axi_out.tlast;
 
   m_tdata                <= axi_passthrough.tdata when wr_encoded_data = '0' else
-                            mirror_bits(axi_encoded.tdata);
+                            mirror_bits(axi_out.tdata);
 
 
   m_tvalid               <= (axi_passthrough.tvalid and axi_passthrough.tready and not wr_encoded_data)
-                             or axi_encoded.tvalid;
+                             or axi_out.tvalid;
 
   frame_in_last          <= extract_frame_data when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
                             else '0';
@@ -553,7 +553,7 @@ begin
           wr_encoded_data <= '1';
         end if;
 
-        if axi_encoded.tvalid = '1' and axi_encoded.tready = '1' and axi_encoded.tlast = '1' then
+        if axi_out.tvalid = '1' and axi_out.tready = '1' and axi_out.tlast = '1' then
           wr_encoded_data <= '0';
         end if;
 

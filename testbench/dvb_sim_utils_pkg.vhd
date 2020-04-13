@@ -46,9 +46,9 @@ package dvb_sim_utils_pkg is
 
   type config_t is record
     constellation : constellation_t;
-    frame_type : frame_type_t;
-    code_rate : code_rate_t;
-    files : file_pair_t;
+    frame_type    : frame_type_t;
+    code_rate     : code_rate_t;
+    files         : file_pair_t;
   end record;
 
   type config_array_t is array (natural range <>) of config_t;
@@ -67,9 +67,13 @@ package dvb_sim_utils_pkg is
   procedure push(msg : msg_t; value : frame_type_t);
   procedure push(msg : msg_t; value : code_rate_t);
 
+  procedure push(msg : msg_t; value : config_t);
+
   impure function pop(msg : msg_t) return constellation_t;
   impure function pop(msg : msg_t) return frame_type_t;
   impure function pop(msg : msg_t) return code_rate_t;
+
+  impure function pop(msg : msg_t) return config_t;
 
 end dvb_sim_utils_pkg;
 
@@ -81,10 +85,20 @@ package body dvb_sim_utils_pkg is
     push(msg.data, constellation_t'image(value));
   end;
 
+  impure function pop(msg : msg_t) return constellation_t is
+  begin
+    return constellation_t'value(pop(msg.data));
+  end;
+
   procedure push(msg : msg_t; value : frame_type_t) is
   begin
     -- Push value as a string
     push(msg.data, frame_type_t'image(value));
+  end;
+
+  impure function pop(msg : msg_t) return frame_type_t is
+  begin
+    return frame_type_t 'value(pop(msg.data));
   end;
 
   procedure push(msg : msg_t; value : code_rate_t) is
@@ -93,22 +107,44 @@ package body dvb_sim_utils_pkg is
     push(msg.data, code_rate_t'image(value));
   end;
 
-
-  impure function pop(msg : msg_t) return constellation_t is
-  begin
-    return constellation_t'value(pop(msg.data));
-  end;
-
-  impure function pop(msg : msg_t) return frame_type_t is
-  begin
-    return frame_type_t 'value(pop(msg.data));
-  end;
-
   impure function pop(msg : msg_t) return code_rate_t is
   begin
     return code_rate_t'value(pop(msg.data));
   end;
 
+  procedure push(msg : msg_t; value : file_pair_t) is
+  begin
+    push(msg, value.input);
+    push(msg, value.reference);
+  end;
+
+  impure function pop(msg : msg_t) return file_pair_t is
+    constant input     : string := pop(msg);
+    constant reference : string := pop(msg);
+  begin
+    return (input => input, reference => reference);
+  end;
+
+  procedure push(msg : msg_t; value : config_t) is
+  begin
+    push(msg, value.constellation);
+    push(msg, value.frame_type);
+    push(msg, value.code_rate);
+    push(msg, value.files);
+  end;
+
+  impure function pop(msg : msg_t) return config_t is
+    constant constellation : constellation_t := pop(msg);
+    constant frame_type    : frame_type_t    := pop(msg);
+    constant code_rate     : code_rate_t     := pop(msg);
+    constant files         : file_pair_t     := pop(msg);
+  begin
+    return (
+      constellation => constellation,
+      frame_type    => frame_type,
+      code_rate     => code_rate,
+      files         => files);
+  end;
 
   --
   impure function get_test_cfg ( constant str : string)

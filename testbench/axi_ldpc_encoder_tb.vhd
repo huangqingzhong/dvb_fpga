@@ -76,14 +76,6 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   constant CLK_PERIOD            : time := 5 ns;
   constant ERROR_CNT_WIDTH       : integer := 8;
 
-  -- constant table       : integer_2d_array_t := DVB_64800_S2_B6;
-  -- constant LDPC_Q      : natural := 60;
-  -- constant ldpc_length : natural := 64_800 - 43_200; --16200 - 12600;
-
-  constant cfg_table       : integer_2d_array_t := DVB_16200_S2_C8_T2_B6;
-  constant cfg_LDPC_Q      : natural := 10;
-  constant cfg_ldpc_length : natural := 16200 - 12600;
-
   -------------
   -- Signals --
   -------------
@@ -124,9 +116,9 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   signal expected_tdata     : std_logic_vector(DATA_WIDTH - 1 downto 0);
   signal expected_tlast     : std_logic;
 
+  -- White box checking
   type ram_t is array (0 to 4095) of std_logic_vector(15 downto 0);
   signal dut_ram : ram_t;
-
 
 begin
 
@@ -267,8 +259,6 @@ begin
       constant config : config_t
     ) is
 
-      variable dbg_enough    : boolean := False;
-
       impure function get_axi_table_data return data_tuple_array_constr_t is -- {{ -----
         constant table : ldpc_table_t := get_ldpc_table(config.frame_type, config.code_rate);
         variable list  : data_array_pkg.linked_list_t;
@@ -298,17 +288,10 @@ begin
 
               end loop;
 
-              -- if not dbg_enough then
-              --   info(msg.all);
-              --   deallocate(msg);
-              --   msg := null;
-              -- end if;
-
               bit_index := bit_index + 1;
 
             end loop;
 
-            -- assert dbg_enough or msg = null;
           end loop;
 
           return list.size;
@@ -321,7 +304,7 @@ begin
 
       begin
 
-        warning(sformat("list has %d items", fo(list.size)));
+        debug(sformat("list has %d items", fo(list.size)));
 
         for i in 0 to words - 1 loop
           result(i) := list.pop_front;
@@ -350,6 +333,7 @@ begin
       constant config           : config_t;
       constant number_of_frames : in positive) is
       variable file_reader_msg  : msg_t;
+      variable calc_ldpc_msg    : msg_t;
     begin
 
       info("Running test with:");
@@ -361,8 +345,7 @@ begin
 
       for i in 0 to number_of_frames - 1 loop
         -- File reader message
-        file_reader_msg := new_msg;
-        file_reader_msg.sender := self;
+        file_reader_msg := new_msg(sender => self);
 
         push(file_reader_msg, config.files.input);
         push(file_reader_msg, config.constellation);
@@ -370,6 +353,10 @@ begin
         push(file_reader_msg, config.code_rate);
 
         send(net, input_cfg_p, file_reader_msg);
+
+        calc_ldpc_msg := new_msg(sender => self);
+        push(calc_ldpc_msg, config);
+        send(net, find("calc_ldpc_p"), calc_ldpc_msg);
 
         write_ldpc_table(config);
 
@@ -384,7 +371,7 @@ begin
 
     end procedure run_test; -- }} ------------------------------------------------------
 
-    procedure wait_for_transfers is -- {{ ----------------------------------------------
+    procedure wait_for_completion is -- {{ ----------------------------------------------
       variable msg : msg_t;
     begin
       receive(net, self, msg);
@@ -396,7 +383,7 @@ begin
 
       walk(1);
 
-    end procedure wait_for_transfers; -- }} --------------------------------------------
+    end procedure wait_for_completion; -- }} --------------------------------------------
 
   begin
 
@@ -423,17 +410,8 @@ begin
         tready_probability <= 1.0;
 
         for i in configs'range loop
-          run_test(configs(i), number_of_frames => 1);
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
-
-      -- wait_for_transfers;
-
-      -- walk(256);
-
-      -- for i in configs'range loop
-      --   run_test(configs(i), number_of_frames => 1);
-      -- end loop;
-
 
       elsif run("data=0.5,table=1.0,slave=1.0") then
         data_probability   <= 0.5;
@@ -491,7 +469,7 @@ begin
 
       end if;
 
-      wait_for_transfers;
+      wait_for_completion;
 
       check_false(has_message(input_cfg_p));
 
@@ -506,6 +484,8 @@ begin
     wait;
   end process; -- }}
 
+  -- FIXME: This can me moved to the main process and use axi_stream_bfm's tuser to
+  -- transport the config
   input_cfg_p : process -- {{
     constant self        : actor_t := new_actor("input_cfg_p");
     constant main        : actor_t := find("main");
@@ -542,7 +522,6 @@ begin
       cfg_msg.sender := self;
       send(net, main, cfg_msg);
     end if;
-    -- check_equal(error_cnt, 0);
   end process; -- }}
 
   cnt_p : process -- {{ ----------------------------------------------------------------
@@ -575,126 +554,12 @@ begin
     end loop;
   end process; -- }} -------------------------------------------------------------------
 
-  -- ----------------------------------------------------------------------------------------------------------
-  -- dbg_proc_linear : process
-  --   constant logger : logger_t := get_logger("dbg_proc_linear");
-  --   variable mem    : std_logic_vector(ldpc_length - 1 downto 0);
-
-  --   procedure accumulate_ldpc (
-  --     constant table     : in integer_2d_array_t;
-  --     variable data      : out std_logic_vector(ldpc_length - 1 downto 0)) is
-  --     variable rows      : natural := 0;
-  --     variable ptr       : natural := 0;
-  --     variable bit_index : natural := 0;
-  --   begin
-  --     data := (others => '0');
-
-  --     for line_no in table'range loop
-  --       rows := table(line_no)(0);
-
-  --       for group_cnt in 0 to 359 loop
-  --         wait until rising_edge(clk) and axi_master.tvalid = '1' and axi_master.tready = '1';
-
-  --         for row in 1 to table(line_no)'length - 1 loop
-  --           ptr := (table(line_no)(row) + (bit_index mod 360) * LDPC_Q) mod ldpc_length;
-
-  --           if (bit_index mod 360) < 4 then
-  --             info(
-  --               logger,
-  --               sformat(
-  --                 "bit #%d: %s => line_no=%d, row=%d, ptr = %d",
-  --                 fo(bit_index),
-  --                 fo(axi_master.tdata(0)),
-  --                 fo(line_no),
-  --                 fo(row),
-  --                 fo(ptr)));
-  --           end if;
-
-  --           data(ptr) := axi_master.tdata(0) xor data(ptr);
-
-  --         end loop;
-
-  --         if (bit_index mod 360) < 4 then
-  --           info(logger, "                                                              ");
-  --         end if;
-
-  --         if axi_master.tlast = '1' then
-  --           info(
-  --             logger,
-  --             sformat(
-  --               "Exiting at line_no=%d / %d, bit %d",
-  --               fo(line_no),
-  --               fo(table'length),
-  --               fo(bit_index)));
-  --           return;
-  --         end if;
-
-  --         bit_index := bit_index + 1;
-  --       end loop;
-
-  --     end loop;
-
-  --   end ;
-
-  -- begin
-  --   mem := (others => '0');
-
-  --   wait until rst = '0';
-
-  --   while True loop
-  --     accumulate_ldpc(table, mem);
-
-  --     for i in mem'range loop
-  --       if mem(i) /= '1' and mem(i) /= '0' then
-  --         error(logger, sformat("Bit %d value is %s", fo(i), fo(mem(i))));
-  --       end if;
-  --     end loop;
-
-  --     info(logger, "Before post XOR:");
-  --     for byte in 0 to 7 loop
-  --       info(
-  --         logger,
-  --         sformat(
-  --           "%d  | %r  | %b",
-  --           fo(byte),
-  --           fo(mirror_bits(mem(8*(byte + 1) - 1 downto 8*byte))),
-  --           fo(mirror_bits(mem(8*(byte + 1) - 1 downto 8*byte)))));
-  --     end loop;
-
-  --     for i in 1 to mem'length - 1 loop
-  --       mem(i) := mem(i) xor mem(i - 1);
-  --     end loop;
-
-  --     info(logger, "Post XOR:");
-  --     for byte in 0 to 7 loop
-  --       info(
-  --         logger,
-  --         sformat(
-  --           "%d  | %r  | %b",
-  --           fo(byte),
-  --           fo(mirror_bits(mem(8*(byte + 1) - 1 downto 8*byte))),
-  --           fo(mirror_bits(mem(8*(byte + 1) - 1 downto 8*byte)))));
-  --     end loop;
-
-
-
-  --   end loop;
-
-  --   -- wait until rising_edge(clk);
-  --   -- if rst = '0' then
-  --   --   check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
-  --   -- end if;
-  -- end process;
-
-
-    dbg_proc_array : process -- {{ -------------------------------------------------------
+  dbg_proc_array : process -- {{ -------------------------------------------------------
     constant logger : logger_t := get_logger("dbg_proc_array");
-
-    variable mem    : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0);
 
     constant offset_checker_p : actor_t := find("offset_checker_p");
 
-    procedure notify (
+    procedure enqueue_frame_ram_check ( -- {{ ------------------------------------------
       constant offset : in natural;
       constant data   : in std_logic) is
       variable msg    : msg_t := new_msg;
@@ -702,168 +567,165 @@ begin
       push(msg, offset);
       push(msg, data);
       send(net, offset_checker_p, msg);
-    end procedure;
+    end procedure; -- }} ---------------------------------------------------------------
 
+    procedure handle_config ( -- {{ ----------------------------------------------------
+      constant config : config_t ) is
+      constant table  : ldpc_table_t := get_ldpc_table(config.frame_type, config.code_rate);
+      variable mem    : std_logic_vector_2d_t(table.length / 16 - 1 downto 0)(15 downto 0);
 
-    procedure accumulate_ldpc ( -- {{ --------------------------------------------------
-      constant table            : in integer_2d_array_t;
-      variable codes            : out std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0)) is
-      variable rows             : natural := 0;
-      variable offset           : natural := 0;
-      variable offset_addr      : natural := 0;
-      variable offset_bit       : natural := 0;
-      variable input_bit_number : natural := 0;
-      variable data_index       : natural := 0;
-      variable tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
-      variable data_bit         : std_logic;
-    begin
-      codes := (others => (others => '0'));
+      procedure accumulate_ldpc ( -- {{ ------------------------------------------------
+        constant table            : in ldpc_table_t) is
 
-      for line_no in table'range loop
-        rows := table(line_no)(0);
+        variable rows             : natural := 0;
+        variable offset           : natural := 0;
+        variable offset_addr      : natural := 0;
+        variable offset_bit       : natural := 0;
+        variable input_bit_number : natural := 0;
+        variable data_index       : natural := 0;
+        variable tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
+        variable data_bit         : std_logic;
+      begin
+        mem := (others => (others => '0'));
 
-        for group_cnt in 0 to 359 loop
+        for line_no in table.data'range loop
+          rows := table.data(line_no)(0);
 
-          if data_index = 0 then
-            wait until rising_edge(clk) and axi_master.tvalid = '1' and axi_master.tready = '1';
-            tdata := axi_master.tdata;
-          end if;
+          for group_cnt in 0 to 359 loop
 
-          data_bit := tdata(DATA_WIDTH - 1 - data_index);
+            if data_index = 0 then
+              wait until rising_edge(clk) and axi_master.tvalid = '1' and axi_master.tready = '1';
+              tdata := axi_master.tdata;
+            end if;
 
-          if data_index = DATA_WIDTH - 1 then
-            data_index := 0;
-          else
-            data_index := data_index + 1;
-          end if;
+            data_bit := tdata(DATA_WIDTH - 1 - data_index);
 
-          for row in 1 to rows loop
-            offset := (table(line_no)(row) + (input_bit_number mod 360) * cfg_LDPC_Q) mod cfg_ldpc_length;
+            if data_index = DATA_WIDTH - 1 then
+              data_index := 0;
+            else
+              data_index := data_index + 1;
+            end if;
 
-            offset_addr := offset / 16;
-            offset_bit  := offset mod 16;
+            for row in 1 to rows loop
+              offset := (table.data(line_no)(row) + (input_bit_number mod 360) * table.q) mod table.length;
 
-            codes(offset_addr)(offset_bit) := data_bit xor codes(offset_addr)(offset_bit);
+              offset_addr := offset / 16;
+              offset_bit  := offset mod 16;
 
-            notify(offset, codes(offset_addr)(offset_bit));
+              mem(offset_addr)(offset_bit) := data_bit xor mem(offset_addr)(offset_bit);
 
-            -- if offset = 1078 then
-            -- if axi_master.tlast = '1' then
-            -- if input_bit_number < 32 or axi_master.tlast = '1' then
-            --   debug(
-            --     logger,
-            --     sformat(
-            --       "[%2d] codes(%4d)(%2d) = %r  || axi_master.tdata = %r (offset = %5d, data_bit = %r)",
-            --       fo(data_index),
-            --       fo(offset_addr),
-            --       fo(offset_bit),
-            --       fo(codes(offset_addr)),
-            --       fo(tdata),
-            --       fo(offset),
-            --       fo(data_bit)
-            --     )
-            --   );
-            -- end if;
+              enqueue_frame_ram_check(offset, mem(offset_addr)(offset_bit));
 
+              -- if offset = 1078 then
+              -- if axi_master.tlast = '1' then
+              -- if input_bit_number < 32 or axi_master.tlast = '1' then
+              --   debug(
+              --     logger,
+              --     sformat(
+              --       "[%2d] mem(%4d)(%2d) = %r  || axi_master.tdata = %r (offset = %5d, data_bit = %r)",
+              --       fo(data_index),
+              --       fo(offset_addr),
+              --       fo(offset_bit),
+              --       fo(mem(offset_addr)),
+              --       fo(tdata),
+              --       fo(offset),
+              --       fo(data_bit)
+              --     )
+              --   );
+              -- end if;
+
+            end loop;
+
+            -- info(logger, "");-- {{-- }}
+
+            if axi_master.tlast = '1' then
+              info(
+                logger,
+                sformat(
+                  "Exiting at line_no=%d / %d, bit %d. Last offset was %d",
+                  fo(line_no),
+                  fo(table.data'length - 1),
+                  fo(input_bit_number),
+                  fo(offset)
+                )
+              );
+
+              return;
+            end if;
+
+            input_bit_number := input_bit_number + 1;
           end loop;
-
-          -- info(logger, "");-- {{-- }}
-
-          if axi_master.tlast = '1' then
-            info(
-              logger,
-              sformat(
-                "Exiting at line_no=%d / %d, bit %d. Last offset was %d",
-                fo(line_no),
-                fo(table'length - 1),
-                fo(input_bit_number),
-                fo(offset)
-              )
-            );
-
-            return;
-          end if;
-
-          input_bit_number := input_bit_number + 1;
         end loop;
 
-      end loop;
+      end procedure; -- }} ---------------------------------------------------------------
 
-    end procedure; -- }} ---------------------------------------------------------------
+      impure function post_xor ( -- {{ ---------------------------------------------------
+        constant data : std_logic_vector_2d_t(table.length/16 - 1 downto 0)(15 downto 0))
+        return std_logic_vector_2d_t is
+        variable result : std_logic_vector_2d_t(table.length/16 - 1 downto 0)(15 downto 0);
+        variable addr   : natural;
+        variable offset : natural;
+      begin
 
-    impure function post_xor ( -- {{ ---------------------------------------------------
-      constant data : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0))
-      return std_logic_vector_2d_t is
-      variable result : std_logic_vector_2d_t(cfg_ldpc_length/16 - 1 downto 0)(15 downto 0);
-      variable addr   : natural;
-      variable offset : natural;
-    begin
+        result := data;
 
-      result := data;
+        for i in 1 to table.length - 1 loop
+          addr := i / 16;
+          offset := i mod 16;
 
-      for i in 1 to cfg_ldpc_length - 1 loop
-        addr := i / 16;
-        offset := i mod 16;
+          result(addr)(offset) := result(addr)(offset) xor result((i - 1) / 16)((i - 1) mod 16);
 
-        result(addr)(offset) := result(addr)(offset) xor result((i - 1) / 16)((i - 1) mod 16);
+          -- if addr = 0 then
+          --   debug(
+          --     logger,
+          --     sformat(
+          --       "result(%d)(%d) := result(%d)(%d) xor result(%d)(%d) ==> " &
+          --       "result(%d)(%d) := %r xor %r => %r",
+          --       fo(addr), fo(offset),
+          --       fo(addr), fo(offset),
+          --       fo((i - 1) / 16), fo((i - 1) mod 16),
+          --       fo(addr), fo(offset),
+          --       fo(result(addr)(offset)), fo(result((i - 1) / 16)((i - 1) mod 16)),
+          --       fo(result(addr)(offset))
+          --     )
+          --   );
+          -- end if;
 
-        -- if addr = 0 then
-        --   debug(
-        --     logger,
-        --     sformat(
-        --       "result(%d)(%d) := result(%d)(%d) xor result(%d)(%d) ==> " &
-        --       "result(%d)(%d) := %r xor %r => %r",
-        --       fo(addr), fo(offset),
-        --       fo(addr), fo(offset),
-        --       fo((i - 1) / 16), fo((i - 1) mod 16),
-        --       fo(addr), fo(offset),
-        --       fo(result(addr)(offset)), fo(result((i - 1) / 16)((i - 1) mod 16)),
-        --       fo(result(addr)(offset))
-        --     )
-        --   );
-        -- end if;
+        end loop;
+        return result;
+      end function; -- }} ----------------------------------------------------------------
 
-      end loop;
-      return result;
-    end function; -- }} ----------------------------------------------------------------
+      procedure compare_ram is -- {{ -----------------------------------------------------
+        variable errors : natural := 0;
+      begin
+        -- for i in 0 to mem'length - 1 loop
+        for i in 0 to 7 loop
+          if to_01(dut_ram(i)) /= to_01(mem(i)) then
+            warning(
+              logger,
+              sformat("[%4d] dut_ram = %r, mem = %r", fo(i), fo(dut_ram(i)), fo(mem(i))
+            )
+          );
+          errors := errors + 1;
+          end if;
+        end loop;
 
-    procedure compare_ram is -- {{ -----------------------------------------------------
-      variable errors : natural := 0;
-    begin
-      -- for i in 0 to mem'length - 1 loop
-      for i in 0 to 7 loop
-        if to_01(dut_ram(i)) /= to_01(mem(i)) then
-          warning(
-            logger,
-            sformat("[%4d] dut_ram = %r, mem = %r", fo(i), fo(dut_ram(i)), fo(mem(i))
-          )
-        );
-        errors := errors + 1;
+        if errors = 0 then
+          info(logger, "DUT RAM and TB RAM match");
+        else
+            warning(
+              logger,
+              sformat("DUT RAM and TB RAM have %d (%d \%) differences", fo(errors), fo(100*errors / mem'length)
+            )
+          );
         end if;
-      end loop;
 
-      if errors = 0 then
-        info(logger, "DUT RAM and TB RAM match");
-      else
-          warning(
-            logger,
-            sformat("DUT RAM and TB RAM have %d (%d \%) differences", fo(errors), fo(100*errors / mem'length)
-          )
-        );
-      end if;
+      end procedure; -- }} ---------------------------------------------------------------
 
-    end procedure; -- }} ---------------------------------------------------------------
+    begin
+      info(logger, "Handling config: " & to_string(config));
 
-  begin
-    mem := (others => (others => '0'));
-
-    wait until rst = '0';
-
-    init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/ram", "/axi_ldpc_encoder_tb/dut_ram", 1);
-
-    while True loop
-      mem := (others => (others => '0'));
-      accumulate_ldpc(cfg_table, mem);
+      accumulate_ldpc(table);
 
       compare_ram;
 
@@ -900,16 +762,27 @@ begin
           ));
       end loop;
 
+
+    end procedure; -- }} ---------------------------------------------------------------
+
+    constant self : actor_t := new_actor("calc_ldpc_p");
+    variable msg  : msg_t;
+
+  begin
+
+    wait until rst = '0';
+
+    init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/ram", "/axi_ldpc_encoder_tb/dut_ram", 1);
+
+    while True loop
+      receive(net, self, msg);
+      handle_config(pop(msg));
     end loop;
 
-    -- wait until rising_edge(clk);
-    -- if rst = '0' then
-    --   check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
-    -- end if;
   end process; -- }} -------------------------------------------------------------------
 
   -- This will only work on ModelSim
-  frame_ram_monitor : block
+  frame_ram_monitor : block -- {{ ------------------------------------------------------
     constant logger    : logger_t := get_logger("frame_ram_monitor");
     signal ram_we      : std_logic;
     signal ram_wr_addr : std_logic_vector(11 downto 0);
@@ -925,13 +798,13 @@ begin
       wait;
     end process;
 
-    check_p : process
+    check_p : process -- {{ ------------------------------------------------------------
       constant self     : actor_t := new_actor("offset_checker_p");
       variable msg      : msg_t;
       variable offset   : natural;
       variable exp_addr : std_logic_vector(11 downto 0);
       variable exp_data : std_logic;
-      variable errors   : natural := 0;
+      variable cnt      : natural := 0;
     begin
       wait until rst = '0';
 
@@ -944,12 +817,11 @@ begin
         exp_data := pop(msg);
 
         if unsigned(ram_wr_addr) /= ( offset / 16 ) or ram_wr_data( offset mod 16 ) /= exp_data then
-          errors := errors + 1;
           error(
             logger,
             sformat(
               "[%3d] Offset = %4d (%3d, %2d) || ram_wr_addr = %4d || ram_wr_data = %r (%r) || exp_data = %r",
-              fo(errors),
+              fo(cnt),
               fo(offset),
               fo(offset / 16),
               fo(offset mod 16),
@@ -964,9 +836,11 @@ begin
 
         end if;
 
-      end loop;
-    end process;
+        cnt := cnt + 1;
 
-  end block;
+      end loop;
+    end process; -- }}
+
+  end block; -- }}
 
 end axi_ldpc_encoder_tb;
