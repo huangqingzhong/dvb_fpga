@@ -402,7 +402,7 @@ begin
 
       walk(32);
 
-      set_timeout(runner, 1 ms);
+      set_timeout(runner, 5 ms);
 
       if run("back_to_back") then
         data_probability   <= 1.0;
@@ -572,7 +572,7 @@ begin
     procedure handle_config ( -- {{ ----------------------------------------------------
       constant config : config_t ) is
       constant table  : ldpc_table_t := get_ldpc_table(config.frame_type, config.code_rate);
-      variable mem    : std_logic_vector_2d_t(table.length / 16 - 1 downto 0)(15 downto 0);
+      variable mem    : std_logic_vector_2d_t((table.length + 15) / 16 - 1 downto 0)(15 downto 0);
 
       procedure accumulate_ldpc ( -- {{ ------------------------------------------------
         constant table            : in ldpc_table_t) is
@@ -660,9 +660,9 @@ begin
       end procedure; -- }} ---------------------------------------------------------------
 
       impure function post_xor ( -- {{ ---------------------------------------------------
-        constant data : std_logic_vector_2d_t(table.length/16 - 1 downto 0)(15 downto 0))
+        constant data   : std_logic_vector_2d_t)
         return std_logic_vector_2d_t is
-        variable result : std_logic_vector_2d_t(table.length/16 - 1 downto 0)(15 downto 0);
+        variable result : std_logic_vector_2d_t((table.length + 15 ) /16 - 1 downto 0)(15 downto 0);
         variable addr   : natural;
         variable offset : natural;
       begin
@@ -723,7 +723,7 @@ begin
       end procedure; -- }} ---------------------------------------------------------------
 
     begin
-      info(logger, "Handling config: " & to_string(config));
+      info(logger, sformat("Handling config: %s. Table length is %s", to_string(config), fo(table.length)));
 
       accumulate_ldpc(table);
 

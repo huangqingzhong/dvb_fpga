@@ -119,7 +119,9 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal frame_ram_rddata       : std_logic_vector(FRAME_RAM_DATA_WIDTH  - 1 downto 0);
 
   signal frame_in_last          : std_logic;
+  signal frame_in_mask          : std_logic_vector((FRAME_RAM_DATA_WIDTH + 7) / 8 - 1 downto 0);
   signal frame_out_last         : std_logic;
+  signal frame_out_mask         : std_logic_vector((FRAME_RAM_DATA_WIDTH + 7) / 8 - 1 downto 0);
 
   -- Frame RAM data loop
   signal frame_ram_wrdata       : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
@@ -130,13 +132,15 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
 
   signal table_handle_ready     : std_logic;
 
-  signal encoded_wr_mask        : std_logic;
+  signal encoded_wr_en_mask     : std_logic;
   signal encoded_wr_en          : std_logic;
   signal encoded_wr_full        : std_logic;
   signal encoded_wr_data        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   signal encoded_wr_last        : std_logic;
+  signal encoded_wr_mask        : std_logic_vector((FRAME_RAM_DATA_WIDTH + 7) / 8 - 1 downto 0);
 
-  signal axi_encoded            : axi_stream_data_bus_t(tdata(FRAME_RAM_DATA_WIDTH - 1 downto 0));
+  signal axi_encoded            : axi_stream_bus_t(tdata(FRAME_RAM_DATA_WIDTH - 1 downto 0),
+                                                   tuser((FRAME_RAM_DATA_WIDTH + 7) / 8 - 1 downto 0));
 
   signal wr_encoded_data        : std_logic;
 
@@ -207,10 +211,14 @@ begin
   -- Convert from FRAME_RAM_DATA_WIDTH to the specified data width
   input_conversion_block : block -- {{ -------------------------------------------------
     signal axi_bit_tid  : std_logic_vector(FRAME_TYPE_WIDTH - 1 downto 0);
+    signal axi_bit_tkeep: std_logic_vector(DATA_WIDTH / 8 - 1 downto 0);
 
   begin
 
-    axi_bit_frame_type    <= decode(axi_bit_tid);
+    axi_bit_frame_type <= decode(axi_bit_tid);
+
+    axi_bit_tkeep      <= (others => '1') when axi_ldpc.tlast = '1' else
+                          (others => '0');
 
     input_width_conversion_u : entity fpga_cores.axi_stream_width_converter
       generic map (
@@ -224,7 +232,7 @@ begin
         -- AXI stream input
         s_tready   => axi_ldpc.tready,
         s_tdata    => mirror_bits(axi_ldpc.tdata), -- width converter is little endian, we need big endian
-        s_tkeep    => (others => to_01(axi_ldpc.tlast)),
+        s_tkeep    => axi_bit_tkeep,
         s_tid      => encode(axi_ldpc_frame_type),
         s_tvalid   => axi_ldpc.tvalid,
         s_tlast    => axi_ldpc.tlast,
@@ -255,24 +263,36 @@ begin
       context_in  => frame_ram_wrdata);
 
   -- Can't stop reading from the frame RAM instantly, allow some slack
-  frame_ram_adapter_u : entity fpga_cores.axi_stream_master_adapter
-    generic map (
-      MAX_SKEW_CYCLES => 3,
-      TDATA_WIDTH     => encoded_wr_data'length)
-    port map (
-      -- Usual ports
-      clk      => clk,
-      reset    => rst,
-      -- wanna-be AXI interface
-      wr_en    => encoded_wr_en and encoded_wr_mask,
-      wr_full  => encoded_wr_full,
-      wr_data  => encoded_wr_data,
-      wr_last  => encoded_wr_last,
-      -- AXI master
-      m_tvalid => axi_encoded.tvalid,
-      m_tready => axi_encoded.tready,
-      m_tdata  => axi_encoded.tdata,
-      m_tlast  => axi_encoded.tlast);
+  frame_ram_adapter_block : block -- {{ ------------------------------------------------
+      signal wr_data   : std_logic_vector(encoded_wr_data'length + encoded_wr_mask'length - 1 downto 0);
+      signal tdata_out : std_logic_vector(encoded_wr_data'length + encoded_wr_mask'length - 1 downto 0);
+  begin
+
+    wr_data           <= encoded_wr_mask & encoded_wr_data;
+
+    axi_encoded.tuser <= tdata_out(tdata_out'length - 1 downto 16);
+    axi_encoded.tdata <= tdata_out(15 downto 0);
+
+    frame_ram_adapter_u : entity fpga_cores.axi_stream_master_adapter
+      generic map (
+        MAX_SKEW_CYCLES => 3,
+        TDATA_WIDTH     => encoded_wr_data'length + encoded_wr_mask'length)
+      port map (
+        -- Usual ports
+        clk      => clk,
+        reset    => rst,
+        -- wanna-be AXI interface
+        wr_en    => encoded_wr_en and encoded_wr_en_mask,
+        wr_full  => encoded_wr_full,
+        wr_data  => wr_data,
+        wr_last  => encoded_wr_last,
+        -- AXI master
+        m_tvalid => axi_encoded.tvalid,
+        m_tready => axi_encoded.tready,
+        m_tdata  => tdata_out,
+        m_tlast  => axi_encoded.tlast);
+
+    end block; -- }} -------------------------------------------------------------------
 
   -- Convert from FRAME_RAM_DATA_WIDTH to the specified data width
   output_width_conversion_u : entity fpga_cores.axi_stream_width_converter
@@ -287,7 +307,7 @@ begin
       -- AXI stream input
       s_tready   => axi_encoded.tready,
       s_tdata    => axi_encoded.tdata,
-      s_tkeep    => (others => axi_encoded.tlast),
+      s_tkeep    => axi_encoded.tuser,
       s_tid      => (others => '0'),
       s_tvalid   => axi_encoded.tvalid,
       s_tlast    => axi_encoded.tlast,
@@ -342,6 +362,25 @@ begin
   frame_in_last          <= extract_frame_data when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
                             else '0';
 
+  -- FIXME: This is not synth friendly, write this properly
+  frame_mask_block : block
+    impure function get_mask_from_bits ( constant bits_remaining : natural ) return std_logic_vector is
+      -- Use mod operator to avoid going out of bounds
+      constant adjusted : natural := bits_remaining mod FRAME_RAM_DATA_WIDTH;
+      variable result   : std_logic_vector(frame_in_mask'length - 1 downto 0) := (others => '0');
+    begin
+      -- result((adjusted + 7) / 8 - 1 downto 0) := (others => '1');
+      result(adjusted / 8 - 1 downto 0) := (others => '1');
+      if result = (result'range => '0') then
+        result := (others => '1');
+      end if;
+      return result;
+    end function;
+  begin
+    frame_in_mask <= (others => '0') when to_01(frame_in_last) = '0' else
+                     get_mask_from_bits(to_integer(frame_bits_remaining));
+  end block;
+
   ---------------
   -- Processes --
   ---------------
@@ -354,7 +393,7 @@ begin
   begin
     if rst = '1' then
       axi_bit_tready_p     <= '1';
-      encoded_wr_mask      <= '0';
+      encoded_wr_en_mask   <= '0';
       extract_frame_data   <= '0';
       table_handle_ready   <= '1';
 
@@ -369,6 +408,7 @@ begin
       frame_bit_index      <= (others => 'U');
       frame_bits_remaining <= (others => 'U');
       frame_out_last       <= 'U';
+      frame_out_mask       <= (others => 'U');
       frame_ram_en         <= 'U';
       table_offset         <= (others => 'U');
 
@@ -377,16 +417,18 @@ begin
       frame_ram_en          <= '0';
       frame_bit_index       <= table_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
       frame_out_last        <= frame_in_last;
+      frame_out_mask        <= frame_in_mask;
       encoded_wr_last       <= frame_out_last;
+      encoded_wr_mask       <= frame_out_mask;
 
       if frame_ram_ready = '1' then
         frame_addr_rst_reg0 <= frame_addr_rst;
       end if;
 
       if frame_addr_rst_reg0 = '1' then
-        encoded_wr_mask     <= '1';
+        encoded_wr_en_mask  <= '1';
       elsif encoded_wr_last = '1' then
-        encoded_wr_mask     <= '0';
+        encoded_wr_en_mask  <= '0';
       end if;
 
       -- Frame RAM addressing depends if we're calculating the codes or extracting them
@@ -467,7 +509,7 @@ begin
         frame_ram_en <= '1';
       end if;
 
-      if encoded_wr_mask = '0' and has_axi_data then
+      if encoded_wr_en_mask = '0' and has_axi_data then
         has_table_data     := False;
         table_handle_ready <= '1';
       end if;
@@ -506,7 +548,7 @@ begin
       -- Handle data coming out of the frame RAM, either by using the input data of by
       -- calculating the actual final XOR'ed value
       if frame_ram_ready = '1' then
-        if encoded_wr_mask = '0' then
+        if encoded_wr_en_mask = '0' then
           frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata_sampled
                                                  xor to_01(frame_ram_rddata(frame_bit_index_i));
         else
@@ -520,7 +562,7 @@ begin
           end loop;
 
           -- Assign data out and decrement the bits consumed
-          encoded_wr_en    <= encoded_wr_mask;
+          encoded_wr_en    <= encoded_wr_en_mask;
           encoded_wr_data  <= xored_data;
         end if;
       end if;
