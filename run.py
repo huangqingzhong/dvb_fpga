@@ -26,6 +26,7 @@ import logging
 import os
 import os.path as p
 import random
+import struct
 import subprocess as subp
 import sys
 import time
@@ -201,10 +202,112 @@ def _generateGnuRadioData():
     pool.join()
 
 
+LDPC_Q = {
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C1_4): 135,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C1_3): 120,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C2_5): 108,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C1_2): 90,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C3_5): 72,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C2_3): 60,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C3_4): 45,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C4_5): 36,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C5_6): 30,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C8_9): 20,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C9_10): 18,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C1_4): 36,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C1_3): 30,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C2_5): 27,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C1_2): 25,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C3_5): 18,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C2_3): 15,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C3_4): 12,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C4_5): 10,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C5_6): 8,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C8_9): 5,
+}
+
+LDPC_LENGTH = {
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C1_4): 64_800 - 16_200,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C1_3): 64_800 - 21_600,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C2_5): 64_800 - 25_920,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C1_2): 64_800 - 32_400,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C3_5): 64_800 - 38_880,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C2_3): 64_800 - 43_200,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C3_4): 64_800 - 48_600,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C4_5): 64_800 - 51_840,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C5_6): 64_800 - 54_000,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C8_9): 64_800 - 57_600,
+    (FrameLength.FECFRAME_NORMAL, CodeRate.C9_10): 64_800 - 58_320,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C1_4): 16_200 - 3_240,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C1_3): 16_200 - 5_400,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C2_5): 16_200 - 6_480,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C1_2): 16_200 - 7_200,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C3_5): 16_200 - 9_720,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C2_3): 16_200 - 10_800,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C3_4): 16_200 - 11_880,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C4_5): 16_200 - 12_600,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C5_6): 16_200 - 13_320,
+    (FrameLength.FECFRAME_SHORT, CodeRate.C8_9): 16_200 - 14_400,
+}
+
+
+def _populateLdpcTable(frame_length, code_rate, src, dest):
+    # Read the csv file first
+
+    print(
+        f"Generating LDPC table for FECFRAME={frame_length.value}, "
+        f'code rate={code_rate.value} using "{src}" as reference. '
+        f'Binary data will be written to "{dest}"',
+    )
+
+    table = [x.split(",") for x in open(src, "r").read().split("\n") if x]
+
+    table_q = LDPC_Q[(frame_length, code_rate)]
+    table_length = LDPC_LENGTH[(frame_length, code_rate)]
+
+    with open(dest, "wb") as fd:
+        # Each offset is 16 bits (to represent 64,800 bits of FECFRAME_NORMAL),
+        # but we'll also embed the s_ldpc_next values into the file as well on a
+        # byte, so data width will 24: data[16] is s_ldpc_next while data[15:0] is
+        # the actual offset
+        bit_index = 0
+        for line in table:
+            for _ in range(360):
+                #  dbg = []
+                for i, coefficient in enumerate(tuple(int(x) for x in line)):
+                    offset = (coefficient + (bit_index % 360) * table_q) % table_length
+                    # Just to recap:
+                    # - "H" -> Unsigned short
+                    # - "?" -> boolean
+                    fd.write(struct.pack(">?H", i == len(line) - 1, offset))
+
+                bit_index += 1
+
+
+def _createLdpcTables():
+    path_to_tables = p.join(ROOT, "misc", "ldpc")
+    for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,)):
+        csv_table = (
+            f"{path_to_tables}/"
+            f"ldpc_table_{config.frame_length.name}_{config.code_rate.name}.csv"
+        )
+        bin_table = (
+            f"{path_to_tables}/"
+            f"ldpc_table_{config.frame_length.name}_{config.code_rate.name}.bin"
+        )
+
+        if not p.exists(bin_table):
+            assert p.exists(csv_table), f"No such file: {repr(csv_table)}"
+            _populateLdpcTable(
+                config.frame_length, config.code_rate, csv_table, bin_table,
+            )
+
+
 def main():
     "Main entry point for DVB FPGA test runner"
 
     _generateGnuRadioData()
+    _createLdpcTables()
 
     cli = VUnit.from_argv()
     cli.add_osvvm()

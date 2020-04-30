@@ -362,24 +362,13 @@ begin
   frame_in_last          <= extract_frame_data when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
                             else '0';
 
-  -- FIXME: This is not synth friendly, write this properly
-  frame_mask_block : block
-    impure function get_mask_from_bits ( constant bits_remaining : natural ) return std_logic_vector is
-      -- Use mod operator to avoid going out of bounds
-      constant adjusted : natural := bits_remaining mod FRAME_RAM_DATA_WIDTH;
-      variable result   : std_logic_vector(frame_in_mask'length - 1 downto 0) := (others => '0');
-    begin
-      -- result((adjusted + 7) / 8 - 1 downto 0) := (others => '1');
-      result(adjusted / 8 - 1 downto 0) := (others => '1');
-      if result = (result'range => '0') then
-        result := (others => '1');
-      end if;
-      return result;
-    end function;
-  begin
-    frame_in_mask <= (others => '0') when to_01(frame_in_last) = '0' else
-                     get_mask_from_bits(to_integer(frame_bits_remaining));
-  end block;
+  -- Frame RAM data width is fixed to 16, so the mask is 2 and will only ever going to
+  -- be either 01b or 11b
+  frame_in_mask <= "00" when to_01(frame_in_last) = '0' else
+                   "01" when frame_bits_remaining <= 8 else
+                   "11";
+
+  assert not (frame_in_last = '1' and frame_in_mask = "00");
 
   ---------------
   -- Processes --

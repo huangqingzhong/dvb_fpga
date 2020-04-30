@@ -66,15 +66,15 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   ---------------
   -- Constants --
   ---------------
-  constant configs               : config_array_t := get_test_cfg(TEST_CFG);
+  constant configs           : config_array_t := get_test_cfg(TEST_CFG);
 
-  constant DATA_WIDTH            : integer := 8;
+  constant DATA_WIDTH        : integer := 8;
 
-  constant FILE_READER_NAME      : string := "file_reader";
-  constant FILE_CHECKER_NAME     : string := "file_checker";
-  constant AXI_TABLE_BFM         : string := "axi_table";
-  constant CLK_PERIOD            : time := 5 ns;
-  constant ERROR_CNT_WIDTH       : integer := 8;
+  constant LDPC_READER_NAME  : string  := "ldpc_table";
+  constant FILE_READER_NAME  : string  := "file_reader";
+  constant FILE_CHECKER_NAME : string  := "file_checker";
+  constant CLK_PERIOD        : time    := 5 ns;
+  constant ERROR_CNT_WIDTH   : integer := 8;
 
   -------------
   -- Signals --
@@ -103,8 +103,7 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   signal table_probability  : real range 0.0 to 1.0 := 1.0;
   signal tready_probability : real range 0.0 to 1.0 := 1.0;
 
-  signal axi_ldpc           : axi_stream_bus_t(tdata(numbits(max(DVB_N_LDPC)) - 1 downto 0),
-                                               tuser(numbits(max(DVB_N_LDPC)) downto 0));
+  signal axi_ldpc           : axi_stream_data_bus_t(tdata(numbits(max(DVB_N_LDPC)) + 8 - 1 downto 0));
 
   -- AXI input
   signal axi_master         : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
@@ -136,9 +135,9 @@ begin
       cfg_frame_type    => cfg_frame_type,
       cfg_code_rate     => cfg_code_rate,
 
-      s_ldpc_offset     => axi_ldpc.tdata,
-      s_ldpc_next       => axi_ldpc.tuser(axi_ldpc.tuser'length - 1),
-      s_ldpc_tuser      => axi_ldpc.tuser(axi_ldpc.tuser'length - 2 downto 0),
+      s_ldpc_offset     => axi_ldpc.tdata(numbits(max(DVB_N_LDPC)) - 1 downto 0),
+      s_ldpc_next       => axi_ldpc.tdata(numbits(max(DVB_N_LDPC))),
+      s_ldpc_tuser      => (others => '0'), --axi_ldpc.tuser(axi_ldpc.tuser'length - 2 downto 0),
       s_ldpc_tvalid     => axi_ldpc.tvalid,
       s_ldpc_tlast      => axi_ldpc.tlast,
       s_ldpc_tready     => axi_ldpc.tready,
@@ -155,24 +154,42 @@ begin
       m_tlast           => axi_slave.tlast,
       m_tdata           => axi_slave.tdata);
 
-  axi_table_u : entity fpga_cores_sim.axi_stream_bfm
+  -- axi_table_u : entity fpga_cores_sim.axi_stream_bfm
+  --   generic map (
+  --     NAME        => AXI_TABLE_BFM,
+  --     TDATA_WIDTH => axi_ldpc.tdata'length,
+  --     TUSER_WIDTH => axi_ldpc.tuser'length,
+  --     TID_WIDTH   => 0)
+  --   port map (
+  --     -- Usual ports
+  --     clk      => clk,
+  --     rst      => rst,
+  --     -- AXI stream output
+  --     m_tready => axi_ldpc.tready,
+  --     m_tdata  => axi_ldpc.tdata,
+  --     m_tuser  => axi_ldpc.tuser,
+  --     m_tkeep  => open,
+  --     m_tid    => open,
+  --     m_tvalid => axi_ldpc.tvalid,
+  --     m_tlast  => axi_ldpc.tlast);
+
+  -- AXI file read
+  axi_table_u : entity fpga_cores_sim.axi_file_reader
     generic map (
-      NAME        => AXI_TABLE_BFM,
-      TDATA_WIDTH => axi_ldpc.tdata'length,
-      TUSER_WIDTH => axi_ldpc.tuser'length,
-      TID_WIDTH   => 0)
+      READER_NAME => LDPC_READER_NAME,
+      DATA_WIDTH  => axi_ldpc.tdata'length)
     port map (
       -- Usual ports
-      clk      => clk,
-      rst      => rst,
+      clk                => clk,
+      rst                => rst,
+      -- Config and status
+      completed          => open,
+      tvalid_probability => 1.0,
       -- AXI stream output
-      m_tready => axi_ldpc.tready,
-      m_tdata  => axi_ldpc.tdata,
-      m_tuser  => axi_ldpc.tuser,
-      m_tkeep  => open,
-      m_tid    => open,
-      m_tvalid => axi_ldpc.tvalid,
-      m_tlast  => axi_ldpc.tlast);
+      m_tready           => axi_ldpc.tready,
+      m_tdata            => axi_ldpc.tdata,
+      m_tvalid           => axi_ldpc.tvalid,
+      m_tlast            => axi_ldpc.tlast);
 
   -- AXI file read
   axi_file_reader_u : entity fpga_cores_sim.axi_file_reader
@@ -222,7 +239,7 @@ begin
   ------------------------------
   clk <= not clk after CLK_PERIOD/2;
 
-  test_runner_watchdog(runner, 25000 us);
+  -- test_runner_watchdog(runner, 25000 us);
 
   m_data_valid <= axi_master.tvalid = '1' and axi_master.tready = '1';
   s_data_valid <= axi_slave.tvalid = '1' and axi_slave.tready = '1';
@@ -233,18 +250,8 @@ begin
   main : process -- {{
     constant self         : actor_t := new_actor("main");
     constant input_cfg_p  : actor_t := find("input_cfg_p");
+    variable ldpc_table   : file_reader_t := new_file_reader(LDPC_READER_NAME);
     variable file_checker : file_reader_t := new_file_reader(FILE_CHECKER_NAME);
-
-    variable table_bfm    : axi_stream_bfm_t := create_bfm(AXI_TABLE_BFM);
-
-    subtype data_tuple_constr_t
-      is data_tuple_t(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
-
-    subtype data_tuple_array_constr_t
-      is data_tuple_array_t(open)(tdata(axi_ldpc.tdata'range), tuser(axi_ldpc.tuser'range));
-
-    -- It's not trivial to determine the length of the AXI frame, so we'll use a linked list
-    package data_array_pkg is new fpga_cores_sim.linked_list_pkg generic map (type_t => data_tuple_constr_t);
 
     procedure walk(constant steps : natural) is -- {{ ----------------------------------
     begin
@@ -254,80 +261,6 @@ begin
         end loop;
       end if;
     end procedure walk; -- }} ----------------------------------------------------------
-
-    procedure write_ldpc_table ( -- {{ --------------------------------------------------
-      constant config : config_t
-    ) is
-
-      impure function get_axi_table_data return data_tuple_array_constr_t is -- {{ -----
-        constant table : ldpc_table_t := get_ldpc_table(config.frame_type, config.code_rate);
-        variable list  : data_array_pkg.linked_list_t;
-
-        impure function populate_list return integer is -- {{ --------------------------
-          variable bit_index : natural  := 0;
-          variable rows      : natural;
-          variable offset    : natural;
-        begin
-          -- info(sformat("Line has %d rows", fo(rows)));
-          for i in table.data'range loop
-            rows := table.data(i)(0);
-
-            for group_cnt in 0 to 359 loop
-              -- write(msg, sformat("[items=%5d] Group: %4d || ", fo(list.size), fo(group_cnt)));
-              for cell in 1 to rows loop
-                offset := (table.data(i)(cell) + (bit_index mod 360) * table.q) mod table.length;
-                -- write(msg, sformat("%4d ", fo(offset)));
-
-                list.push_back(
-                  (
-                    tdata => std_logic_vector(to_unsigned(offset, axi_ldpc.tdata'length)),
-                    tuser => from_boolean(cell = rows) &
-                             std_logic_vector(to_unsigned(bit_index, axi_ldpc.tuser'length - 1))
-                  )
-                );
-
-              end loop;
-
-              bit_index := bit_index + 1;
-
-            end loop;
-
-          end loop;
-
-          return list.size;
-        end function; -- }} ------------------------------------------------------------
-
-        -- Populate the list to get its actual length, then read from the
-        -- linked list to fill it
-        constant words  : natural := populate_list;
-        variable result : data_tuple_array_constr_t(0 to words - 1);
-
-      begin
-
-        debug(sformat("list has %d items", fo(list.size)));
-
-        for i in 0 to words - 1 loop
-          result(i) := list.pop_front;
-        end loop;
-
-        assert list.empty;
-
-        return result;
-
-      end; -- }} -----------------------------------------------------------------------
-
-      constant data : data_tuple_array_constr_t := get_axi_table_data;
-
-    begin
-
-      info("Sending frame to AXI BFM write");
-
-      axi_bfm_write(net,
-        bfm         => table_bfm,
-        data        => data,
-        probability => table_probability,
-        blocking    => False);
-    end procedure; -- }} ---------------------------------------------------------------
 
     procedure run_test ( -- {{ ---------------------------------------------------------
       constant config           : config_t;
@@ -358,7 +291,11 @@ begin
         push(calc_ldpc_msg, config);
         send(net, find("calc_ldpc_p"), calc_ldpc_msg);
 
-        write_ldpc_table(config);
+        enqueue_file(
+          net,
+          ldpc_table,
+          "/home/souto/phase4ground/dvb_fpga/misc/ldpc/ldpc_table_FECFRAME_SHORT_C4_5.bin"
+        );
 
         enqueue_file(
           net,
@@ -376,8 +313,6 @@ begin
     begin
       receive(net, self, msg);
       wait_all_read(net, file_checker);
-
-      join(net, table_bfm);
 
       wait until rising_edge(clk) and axi_slave.tvalid = '0' for 1 ms;
 
@@ -561,7 +496,7 @@ begin
 
     procedure enqueue_frame_ram_check ( -- {{ ------------------------------------------
       constant offset : in natural;
-      constant data   : in std_logic) is
+      constant data   : in std_logic_vector) is
       variable msg    : msg_t := new_msg;
     begin
       push(msg, offset);
@@ -614,7 +549,7 @@ begin
 
               mem(offset_addr)(offset_bit) := data_bit xor mem(offset_addr)(offset_bit);
 
-              enqueue_frame_ram_check(offset, mem(offset_addr)(offset_bit));
+              enqueue_frame_ram_check(offset, mem(offset_addr));
 
               -- if offset = 1078 then
               -- if axi_master.tlast = '1' then
@@ -803,7 +738,7 @@ begin
       variable msg      : msg_t;
       variable offset   : natural;
       variable exp_addr : std_logic_vector(11 downto 0);
-      variable exp_data : std_logic;
+      variable exp_data : std_logic_vector(15 downto 0);
       variable cnt      : natural := 0;
     begin
       wait until rst = '0';
@@ -816,19 +751,20 @@ begin
         offset   := pop(msg);
         exp_data := pop(msg);
 
-        if unsigned(ram_wr_addr) /= ( offset / 16 ) or ram_wr_data( offset mod 16 ) /= exp_data then
+        if unsigned(ram_wr_addr) /= ( offset / 16 ) or ram_wr_data( offset mod 16 ) /= exp_data( offset mod 16 ) then
           error(
             logger,
             sformat(
-              "[%3d] Offset = %4d (%3d, %2d) || ram_wr_addr = %4d || ram_wr_data = %r (%r) || exp_data = %r",
-              fo(cnt),
-              fo(offset),
-              fo(offset / 16),
-              fo(offset mod 16),
-              fo(ram_wr_addr),
-              fo(ram_wr_data),
-              fo(ram_wr_data(offset mod 16)),
-              fo(exp_data)
+              "[%3d] Offset = %4d (%3d, %2d) || ram_wr_addr = %4d || ram_wr_data = %r (%r) || exp_data = %r (%r)",
+              fo( cnt ),
+              fo( offset ),
+              fo( offset / 16 ),
+              fo( offset mod 16 ),
+              fo( ram_wr_addr ),
+              fo( ram_wr_data ),
+              fo( ram_wr_data( offset mod 16 ) ),
+              fo( exp_data ),
+              fo( exp_data( offset mod 16 ) )
             )
           );
         -- else
