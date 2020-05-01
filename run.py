@@ -279,7 +279,7 @@ def _populateLdpcTable(frame_length, code_rate, src, dest):
                     # Just to recap:
                     # - "H" -> Unsigned short
                     # - "?" -> boolean
-                    fd.write(struct.pack(">?H", i == len(line) - 1, offset))
+                    fd.write(struct.pack(">?HH", i == len(line) - 1, bit_index, offset))
 
                 bit_index += 1
 
@@ -361,8 +361,8 @@ def main():
 
     for config in _getAllConfigs(
         constellations=(ConstellationType.MOD_8PSK,),
-        code_rates={CodeRate.C4_5,},
-        frame_lengths={FrameLength.FECFRAME_SHORT,},
+        #  code_rates={CodeRate.C3_5,},
+        #  frame_lengths={FrameLength.FECFRAME_SHORT,},
     ):
         cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
             name=config.name,

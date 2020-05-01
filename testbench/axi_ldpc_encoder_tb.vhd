@@ -103,7 +103,7 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   signal table_probability  : real range 0.0 to 1.0 := 1.0;
   signal tready_probability : real range 0.0 to 1.0 := 1.0;
 
-  signal axi_ldpc           : axi_stream_data_bus_t(tdata(numbits(max(DVB_N_LDPC)) + 8 - 1 downto 0));
+  signal axi_ldpc           : axi_stream_data_bus_t(tdata(2*numbits(max(DVB_N_LDPC)) + 8 - 1 downto 0));
 
   -- AXI input
   signal axi_master         : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
@@ -136,8 +136,8 @@ begin
       cfg_code_rate     => cfg_code_rate,
 
       s_ldpc_offset     => axi_ldpc.tdata(numbits(max(DVB_N_LDPC)) - 1 downto 0),
-      s_ldpc_next       => axi_ldpc.tdata(numbits(max(DVB_N_LDPC))),
-      s_ldpc_tuser      => (others => '0'), --axi_ldpc.tuser(axi_ldpc.tuser'length - 2 downto 0),
+      s_ldpc_tuser      => axi_ldpc.tdata(2*numbits(max(DVB_N_LDPC)) - 1 downto numbits(max(DVB_N_LDPC)) ),
+      s_ldpc_next       => axi_ldpc.tdata(2*numbits(max(DVB_N_LDPC))),
       s_ldpc_tvalid     => axi_ldpc.tvalid,
       s_ldpc_tlast      => axi_ldpc.tlast,
       s_ldpc_tready     => axi_ldpc.tready,
@@ -265,6 +265,7 @@ begin
     procedure run_test ( -- {{ ---------------------------------------------------------
       constant config           : config_t;
       constant number_of_frames : in positive) is
+      constant tb_path          : string := get(runner_cfg, "tb path");
       variable file_reader_msg  : msg_t;
       variable calc_ldpc_msg    : msg_t;
     begin
@@ -294,7 +295,10 @@ begin
         enqueue_file(
           net,
           ldpc_table,
-          "/home/souto/phase4ground/dvb_fpga/misc/ldpc/ldpc_table_FECFRAME_SHORT_C4_5.bin"
+          tb_path &
+          "/../misc/ldpc/ldpc_table_" &
+          upper(frame_type_t'image(config.frame_type)) & "_" &
+          upper(code_rate_t'image(config.code_rate)) & ".bin"
         );
 
         enqueue_file(
