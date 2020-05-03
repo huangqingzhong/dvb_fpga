@@ -99,11 +99,14 @@ class TestDefinition(
     Placeholder for a test config
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs): # pylint: disable=unused-argument
         super(TestDefinition, self).__init__()
         self.timestamp = p.join(self.test_files_path, "timestamp")
 
-    def getTestConfig(self, input_file_path, reference_file_path):
+    def getTestConfigString(self, input_file_path, reference_file_path):
+        """
+        Returns the value for the 'test_cfg' string of the testbench
+        """
         for path in (
             p.join(self.test_files_path, input_file_path),
             p.join(self.test_files_path, reference_file_path),
@@ -252,8 +255,10 @@ LDPC_LENGTH = {
 
 
 def _populateLdpcTable(frame_length, code_rate, src, dest):
-    # Read the csv file first
-
+    """
+    Creates the unrolled binary LDPC table file for the LDPC encoder testbench
+    a CSV file with coefficients (from DVB-S2 spec's appendices B and C).
+    """
     print(
         f"Generating LDPC table for FECFRAME={frame_length.value}, "
         f'code rate={code_rate.value} using "{src}" as reference. '
@@ -285,6 +290,9 @@ def _populateLdpcTable(frame_length, code_rate, src, dest):
 
 
 def _createLdpcTables():
+    """
+    Creates the binary LDPC table files if they don't already exist
+    """
     path_to_tables = p.join(ROOT, "misc", "ldpc")
     for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,)):
         csv_table = (
@@ -351,7 +359,7 @@ def main():
     #      cli.library("lib").entity("axi_bch_encoder_tb").add_config(
     #          name=config.name,
     #          generics=dict(
-    #              test_cfg=config.getTestConfig(
+    #              test_cfg=config.getTestConfigString(
     #                  input_file_path="bch_encoder_input.bin",
     #                  reference_file_path="ldpc_encoder_input.bin",
     #              ),
@@ -367,11 +375,11 @@ def main():
         cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
             name=config.name,
             generics=dict(
-                test_cfg=config.getTestConfig(
+                test_cfg=config.getTestConfigString(
                     input_file_path="ldpc_encoder_input.bin",
                     reference_file_path="bit_interleaver_input.bin",
                 ),
-                NUMBER_OF_TEST_FRAMES=4,
+                NUMBER_OF_TEST_FRAMES=1,
             ),
         )
 
@@ -383,7 +391,7 @@ def main():
     #      cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
     #          name=config.name,
     #          generics=dict(
-    #              test_cfg=config.getTestConfig(
+    #              test_cfg=config.getTestConfigString(
     #                  input_file_path="bch_encoder_input.bin",
     #                  reference_file_path="ldpc_encoder_input.bin",
     #              ),
@@ -395,7 +403,7 @@ def main():
         all_configs = []
         for config in _getAllConfigs():
             all_configs += [
-                config.getTestConfig(
+                config.getTestConfigString(
                     input_file_path="bit_interleaver_input.bin",
                     reference_file_path="bit_interleaver_output.bin",
                 )
@@ -406,7 +414,7 @@ def main():
             #      name=f"data_width={data_width},{config.name}",
             #      generics=dict(
             #          DATA_WIDTH=data_width,
-            #          test_cfg=config.getTestConfig(
+            #          test_cfg=config.getTestConfigString(
             #              input_file_path="bit_interleaver_input.bin",
             #              reference_file_path="bit_interleaver_output.bin",
             #          ),
@@ -446,7 +454,7 @@ def addAllConfigsTest(entity, configs, input_file_basename, reference_file_basen
     params = []
 
     for config in configs:
-        params += [config.getTestConfig(input_file_basename, reference_file_basename)]
+        params += [config.getTestConfigString(input_file_basename, reference_file_basename)]
 
     random.shuffle(params)
 
