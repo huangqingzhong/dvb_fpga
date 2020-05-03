@@ -216,7 +216,7 @@ begin
         push(file_reader_msg, config.code_rate);
 
         send(net, input_cfg_p, file_reader_msg);
-        enqueue_file(net, file_checker, config.files.reference, "1:8");
+        read_file(net, file_checker, config.files.reference, "1:8");
 
       end loop;
 
@@ -313,7 +313,7 @@ begin
     receive(net, self, cfg_msg);
 
     -- Configure the file reader
-    enqueue_file(net, file_reader, pop(cfg_msg), "1:8");
+    read_file(net, file_reader, pop(cfg_msg), "1:8");
 
     wait until rising_edge(clk);
 

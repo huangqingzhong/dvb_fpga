@@ -151,25 +151,6 @@ begin
       m_tlast           => axi_slave.tlast,
       m_tdata           => axi_slave.tdata);
 
-  -- axi_table_u : entity fpga_cores_sim.axi_stream_bfm
-  --   generic map (
-  --     NAME        => AXI_TABLE_BFM,
-  --     TDATA_WIDTH => axi_ldpc.tdata'length,
-  --     TUSER_WIDTH => axi_ldpc.tuser'length,
-  --     TID_WIDTH   => 0)
-  --   port map (
-  --     -- Usual ports
-  --     clk      => clk,
-  --     rst      => rst,
-  --     -- AXI stream output
-  --     m_tready => axi_ldpc.tready,
-  --     m_tdata  => axi_ldpc.tdata,
-  --     m_tuser  => axi_ldpc.tuser,
-  --     m_tkeep  => open,
-  --     m_tid    => open,
-  --     m_tvalid => axi_ldpc.tvalid,
-  --     m_tlast  => axi_ldpc.tlast);
-
   -- AXI file read
   axi_table_u : entity fpga_cores_sim.axi_file_reader
     generic map (
@@ -292,14 +273,14 @@ begin
 
         send(net, input_cfg_p, file_reader_msg);
 
-        enqueue_file(
+        read_file(
           net,
           file_checker,
           config.files.reference,
           "1:8"
         );
 
-        enqueue_file(
+        read_file(
           net,
           ldpc_table,
           tb_path &
@@ -435,7 +416,7 @@ begin
     receive(net, self, cfg_msg);
 
     -- Configure the file reader
-    enqueue_file(net, file_reader, pop(cfg_msg), "1:8");
+    read_file(net, file_reader, pop(cfg_msg), "1:8");
 
     wait until rising_edge(clk);
 
@@ -502,15 +483,18 @@ begin
   begin
 
     dbg_ldpc_accumulate : process -- {{ ------------------------------------------------
-      constant logger : logger_t := get_logger("dbg_proc_array");
+      constant logger           : logger_t := get_logger("dbg_proc_array");
       constant offset_checker_p : actor_t := find("offset_checker_p");
+      constant self             : actor_t := new_actor("calc_ldpc_p");
+      variable msg              : msg_t;
+      variable frame_cnt        : natural := 0;
 
       procedure enqueue_frame_ram_check ( -- {{ ----------------------------------------
-        constant offset : in natural;
-        constant data   : in std_logic_vector) is
-        variable msg    : msg_t := new_msg;
+        constant offset_addr : in natural;
+        constant data        : in std_logic_vector(15 downto 0)) is
+        variable msg         : msg_t := new_msg;
       begin
-        push(msg, offset);
+        push(msg, offset_addr);
         push(msg, data);
         send(net, offset_checker_p, msg);
       end procedure; -- }} ---------------------------------------------------------------
@@ -537,7 +521,7 @@ begin
           for line_no in table.data'range loop
             rows := table.data(line_no)(0);
 
-            for group_cnt in 0 to 359 loop
+            for group_cnt in 0 to DVB_LDPC_GROUP_LENGTH - 1 loop
 
               if data_index = 0 then
                 wait until rising_edge(clk) and axi_master.tvalid = '1' and axi_master.tready = '1';
@@ -553,14 +537,14 @@ begin
               end if;
 
               for row in 1 to rows loop
-                offset := (table.data(line_no)(row) + (input_bit_number mod 360) * table.q) mod table.length;
+                offset := (table.data(line_no)(row) + (input_bit_number mod DVB_LDPC_GROUP_LENGTH) * table.q) mod table.length;
 
                 offset_addr := offset / 16;
                 offset_bit  := offset mod 16;
 
                 mem(offset_addr)(offset_bit) := data_bit xor mem(offset_addr)(offset_bit);
 
-                enqueue_frame_ram_check(offset, mem(offset_addr));
+                -- enqueue_frame_ram_check(offset_addr, mem(offset_addr));
 
                 -- if offset = 1078 then
                 -- if axi_master.tlast = '1' then
@@ -582,19 +566,19 @@ begin
 
               end loop;
 
-              -- info(logger, "");-- {{-- }}
-
               if axi_master.tlast = '1' then
-                info(
+                debug(
                   logger,
                   sformat(
-                    "Exiting at line_no=%d / %d, bit %d. Last offset was %d",
+                    "Last line=%d (out of %d), bit count=%d, last offset=%d",
                     fo(line_no),
                     fo(table.data'length - 1),
                     fo(input_bit_number),
                     fo(offset)
                   )
                 );
+
+                -- enqueue_frame_ram_check(0, (others => '0'));
 
                 return;
               end if;
@@ -649,7 +633,7 @@ begin
             if to_01(dut_ram(i)) /= to_01(mem(i)) then
               warning(
                 logger,
-                sformat("[%4d] dut_ram = %r, mem = %r", fo(i), fo(dut_ram(i)), fo(mem(i))
+                sformat("[frame=%d, word=%4d] dut_ram = %r, mem = %r", fo(frame_cnt), fo(i), fo(dut_ram(i)), fo(mem(i))
               )
             );
             errors := errors + 1;
@@ -661,7 +645,12 @@ begin
           else
               warning(
                 logger,
-                sformat("DUT RAM and TB RAM have %d (%d \%) differences", fo(errors), fo(100*errors / mem'length)
+                sformat(
+                  "Frame=%d, DUT RAM and TB RAM have %d / %d (%d \%) differences",
+                  fo(frame_cnt),
+                  fo(errors),
+                  fo(mem'length),
+                  fo(100*errors / mem'length)
               )
             );
           end if;
@@ -711,9 +700,6 @@ begin
 
       end procedure; -- }} ---------------------------------------------------------------
 
-      constant self : actor_t := new_actor("calc_ldpc_p");
-      variable msg  : msg_t;
-
     begin
 
       wait until rst = '0';
@@ -723,6 +709,7 @@ begin
       while True loop
         receive(net, self, msg);
         handle_config(pop(msg));
+        frame_cnt := frame_cnt + 1;
       end loop;
 
     end process; -- }} -------------------------------------------------------------------
@@ -750,35 +737,41 @@ begin
       check_p : process -- {{ ------------------------------------------------------------
         constant self     : actor_t := new_actor("offset_checker_p");
         variable msg      : msg_t;
-        variable offset   : natural;
-        variable exp_addr : std_logic_vector(11 downto 0);
+        variable exp_addr : natural;
         variable exp_data : std_logic_vector(15 downto 0);
         variable cnt      : natural := 0;
       begin
         wait until rst = '0';
 
         while True loop
-          receive(net, self, msg);
-
           wait until rising_edge(clk) and ram_we = '1';
 
-          offset   := pop(msg);
+          if not has_message(self) then
+            warning(
+              logger,
+              sformat(
+                "Detected RAM wr (addr=%4d, data=%r) but got nothing to compare to",
+                fo(ram_wr_addr),
+                fo(ram_wr_data)
+              )
+            );
+          end if;
+
+          receive(net, self, msg);
+
+          exp_addr := pop(msg);
           exp_data := pop(msg);
 
-          if unsigned(ram_wr_addr) /= ( offset / 16 ) or ram_wr_data( offset mod 16 ) /= exp_data( offset mod 16 ) then
+          if unsigned(ram_wr_addr) /= exp_addr or ram_wr_data /= exp_data then
             error(
               logger,
               sformat(
-                "[%3d] Offset = %4d (%3d, %2d) || ram_wr_addr = %4d || ram_wr_data = %r (%r) || exp_data = %r (%r)",
+                "[%3d] Expected write: (addr=%4d, data=%r), got (addr=%4d, data=%r)",
                 fo( cnt ),
-                fo( offset ),
-                fo( offset / 16 ),
-                fo( offset mod 16 ),
-                fo( ram_wr_addr ),
-                fo( ram_wr_data ),
-                fo( ram_wr_data( offset mod 16 ) ),
+                fo( exp_addr ),
                 fo( exp_data ),
-                fo( exp_data( offset mod 16 ) )
+                fo( ram_wr_addr ),
+                fo( ram_wr_data )
               )
             );
           end if;

@@ -199,8 +199,8 @@ begin
       info(" - reference : " & config.files.reference);
 
       for i in 0 to number_of_frames - 1 loop
-        enqueue_file(net, file_reader, config.files.input, "1:8");
-        enqueue_file(net, file_checker, config.files.reference, "1:8");
+        read_file(net, file_reader, config.files.input, "1:8");
+        read_file(net, file_checker, config.files.reference, "1:8");
       end loop;
 
     end procedure run_test;
