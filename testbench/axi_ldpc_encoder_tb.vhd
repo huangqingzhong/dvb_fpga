@@ -238,8 +238,6 @@ begin
   ------------------------------
   clk <= not clk after CLK_PERIOD/2;
 
-  -- test_runner_watchdog(runner, 25000 us);
-
   m_data_valid <= axi_master.tvalid = '1' and axi_master.tready = '1';
   s_data_valid <= axi_slave.tvalid = '1' and axi_slave.tready = '1';
 
@@ -248,6 +246,7 @@ begin
   ---------------
   main : process -- {{
     constant self         : actor_t := new_actor("main");
+    constant logger       : logger_t := get_logger("main");
     constant input_cfg_p  : actor_t := find("input_cfg_p");
     variable ldpc_table   : file_reader_t := new_file_reader(LDPC_READER_NAME);
     variable file_checker : file_reader_t := new_file_reader(FILE_CHECKER_NAME);
@@ -269,14 +268,16 @@ begin
       variable calc_ldpc_msg    : msg_t;
     begin
 
-      info("Running test with:");
-      info(" - constellation  : " & constellation_t'image(config.constellation));
-      info(" - frame_type     : " & frame_type_t'image(config.frame_type));
-      info(" - code_rate      : " & code_rate_t'image(config.code_rate));
-      info(" - input_file     : " & config.files.input);
-      info(" - reference_file : " & config.files.reference);
+      info(logger, "Running test with:");
+      info(logger, " - constellation  : " & constellation_t'image(config.constellation));
+      info(logger, " - frame_type     : " & frame_type_t'image(config.frame_type));
+      info(logger, " - code_rate      : " & code_rate_t'image(config.code_rate));
+      info(logger, " - input_file     : " & config.files.input);
+      info(logger, " - reference_file : " & config.files.reference);
 
       for i in 0 to number_of_frames - 1 loop
+        info(logger, "Setting up frame #" & to_string(i));
+
         -- File reader message
         file_reader_msg := new_msg(sender => self);
 
@@ -285,11 +286,18 @@ begin
         push(file_reader_msg, config.frame_type);
         push(file_reader_msg, config.code_rate);
 
-        send(net, input_cfg_p, file_reader_msg);
-
         calc_ldpc_msg := new_msg(sender => self);
         push(calc_ldpc_msg, config);
+
+        send(net, input_cfg_p, file_reader_msg);
         send(net, find("calc_ldpc_p"), calc_ldpc_msg);
+
+        enqueue_file(
+          net,
+          file_checker,
+          config.files.reference,
+          "1:8"
+        );
 
         enqueue_file(
           net,
@@ -298,13 +306,6 @@ begin
           "/../misc/ldpc/ldpc_table_" &
           upper(frame_type_t'image(config.frame_type)) & "_" &
           upper(code_rate_t'image(config.code_rate)) & ".bin"
-        );
-
-        enqueue_file(
-          net,
-          file_checker,
-          config.files.reference,
-          "1:8"
         );
 
       end loop;
@@ -340,7 +341,7 @@ begin
 
       walk(32);
 
-      set_timeout(runner, 5 ms);
+      set_timeout(runner, 1 ms);
 
       if run("back_to_back") then
         data_probability   <= 1.0;
