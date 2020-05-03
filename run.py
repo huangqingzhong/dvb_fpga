@@ -26,6 +26,7 @@ import logging
 import os
 import os.path as p
 import random
+import re
 import struct
 import subprocess as subp
 import sys
@@ -99,7 +100,7 @@ class TestDefinition(
     Placeholder for a test config
     """
 
-    def __init__(self, *args, **kwargs): # pylint: disable=unused-argument
+    def __init__(self, *args, **kwargs):  # pylint: disable=unused-argument
         super(TestDefinition, self).__init__()
         self.timestamp = p.join(self.test_files_path, "timestamp")
 
@@ -311,6 +312,29 @@ def _createLdpcTables():
             )
 
 
+class GhdlPragmaHandler:
+    """
+    Removes code between arbitraty pragmas
+    -- ghdl translate_off
+    this is ignored
+    -- ghdl translate_on
+    """
+
+    _PRAGMA = re.compile(
+        r"\s*--\s*ghdl\s+translate_off[\r\n].*?[\n\r]\s*--\s*ghdl\s+translate_on",
+        flags=re.DOTALL | re.I | re.MULTILINE,
+    )
+
+    def run(self, code, file_name):  # pylint: disable=unused-argument,no-self-use
+        for word in ("ghdl", "translate_on", "translate_off"):
+            if word not in code:
+                return code
+
+        result = self._PRAGMA.sub(r"", code)
+
+        return result
+
+
 def main():
     "Main entry point for DVB FPGA test runner"
 
@@ -321,6 +345,8 @@ def main():
     cli.add_osvvm()
     cli.add_com()
     cli.enable_location_preprocessing()
+    if cli.get_simulator_name() == "ghdl":
+        cli.add_preprocessor(GhdlPragmaHandler())
 
     library = cli.add_library("lib")
     library.add_source_files(p.join(ROOT, "rtl", "*.vhd"))
@@ -367,10 +393,10 @@ def main():
     #          ),
     #      )
 
+    # Only generate configs for 8 PSK since LDPC does not depend on this
+    # parameter
     for config in _getAllConfigs(
         constellations=(ConstellationType.MOD_8PSK,),
-        #  code_rates={CodeRate.C3_5,},
-        #  frame_lengths={FrameLength.FECFRAME_SHORT,},
     ):
         cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
             name=config.name,
@@ -382,22 +408,6 @@ def main():
                 NUMBER_OF_TEST_FRAMES=1,
             ),
         )
-
-    #  for config in _getAllConfigs(
-    #      constellations=(ConstellationType.MOD_8PSK,),
-    #      code_rates={CodeRate.C2_3,},
-    #      frame_lengths={FrameLength.FECFRAME_NORMAL,},
-    #  ):
-    #      cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
-    #          name=config.name,
-    #          generics=dict(
-    #              test_cfg=config.getTestConfigString(
-    #                  input_file_path="bch_encoder_input.bin",
-    #                  reference_file_path="ldpc_encoder_input.bin",
-    #              ),
-    #              NUMBER_OF_TEST_FRAMES=1,
-    #          ),
-    #      )
 
     for data_width in (1, 8):
         all_configs = []
@@ -454,7 +464,9 @@ def addAllConfigsTest(entity, configs, input_file_basename, reference_file_basen
     params = []
 
     for config in configs:
-        params += [config.getTestConfigString(input_file_basename, reference_file_basename)]
+        params += [
+            config.getTestConfigString(input_file_basename, reference_file_basename)
+        ]
 
     random.shuffle(params)
 

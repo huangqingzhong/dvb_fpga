@@ -368,7 +368,7 @@ begin
                    "01" when frame_bits_remaining <= DATA_WIDTH else
                    "11";
 
-  assert not (frame_in_last = '1' and frame_in_mask = "00");
+  assert not (rising_edge(clk) and frame_in_last = '1' and frame_in_mask = "00");
 
   ---------------
   -- Processes --
@@ -521,7 +521,7 @@ begin
 
     elsif rising_edge(clk) then
 
-      encoded_wr_en   <= '0';
+      encoded_wr_en    <= '0';
 
       -- Always return the context, will change only when needed
       frame_ram_wrdata <= to_01(frame_ram_rddata);
