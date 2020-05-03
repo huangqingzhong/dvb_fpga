@@ -168,7 +168,6 @@ begin
       code_rate_o     => code_rate(2));
 
   ldpc_encoder_u : entity work.axi_ldpc_encoder
-    generic map (DATA_WIDTH => DATA_WIDTH)
     port map (
       -- Usual ports
       clk               => clk,

@@ -125,7 +125,6 @@ begin
   -- Port mappings --
   -------------------
   dut : entity work.axi_ldpc_encoder
-    generic map ( DATA_WIDTH => DATA_WIDTH )
     port map (
       -- Usual ports
       clk               => clk,

@@ -36,7 +36,6 @@ use work.ldpc_pkg.all;
 -- Entity declaration --
 ------------------------
 entity axi_ldpc_encoder is
-  generic ( DATA_WIDTH : natural := 8 );
   port (
     -- Usual ports
     clk               : in  std_logic;
@@ -57,14 +56,14 @@ entity axi_ldpc_encoder is
     -- AXI data input
     s_tready          : out std_logic;
     s_tvalid          : in  std_logic;
-    s_tdata           : in  std_logic_vector(DATA_WIDTH - 1 downto 0);
+    s_tdata           : in  std_logic_vector(7 downto 0);
     s_tlast           : in  std_logic;
 
     -- AXI output
     m_tready          : in  std_logic;
     m_tvalid          : out std_logic;
     m_tlast           : out std_logic;
-    m_tdata           : out std_logic_vector(DATA_WIDTH - 1 downto 0));
+    m_tdata           : out std_logic_vector(7 downto 0));
 end axi_ldpc_encoder;
 
 architecture axi_ldpc_encoder of axi_ldpc_encoder is
@@ -72,6 +71,7 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   ---------------
   -- Constants --
   ---------------
+  constant DATA_WIDTH           : natural := 8;
   constant ROM_DATA_WIDTH       : natural := numbits(max(DVB_N_LDPC));
   constant FRAME_RAM_DATA_WIDTH : natural := 16;
   constant FRAME_RAM_ADDR_WIDTH : natural
@@ -365,7 +365,7 @@ begin
   -- Frame RAM data width is fixed to 16, so the mask is 2 and will only ever going to
   -- be either 01b or 11b
   frame_in_mask <= "00" when to_01(frame_in_last) = '0' else
-                   "01" when frame_bits_remaining <= 8 else
+                   "01" when frame_bits_remaining <= DATA_WIDTH else
                    "11";
 
   assert not (frame_in_last = '1' and frame_in_mask = "00");
