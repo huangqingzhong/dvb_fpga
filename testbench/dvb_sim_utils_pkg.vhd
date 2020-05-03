@@ -38,8 +38,8 @@ use work.dvb_utils_pkg.all;
 package dvb_sim_utils_pkg is
 
   type file_pair_t is record
-    input : string(1 to 512);
-    reference : string(1 to 512);
+    input : string(1 to 256);
+    reference : string(1 to 256);
   end record;
 
   type file_pair_array_t is array (natural range <>) of file_pair_t;
