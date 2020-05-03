@@ -179,7 +179,7 @@ begin
                    s_tdata;
 
     axi_passthrough.tdata  <= extract(axi_dup0_tdata, 0, WIDTHS);
-    axi_passthrough.tlast  <= extract(axi_dup1_tdata, 1, WIDTHS);
+    axi_passthrough.tlast  <= extract(axi_dup0_tdata, 1, WIDTHS);
 
     axi_ldpc.tdata         <= extract(axi_dup1_tdata, 0, WIDTHS);
     axi_ldpc.tlast         <= extract(axi_dup1_tdata, 1, WIDTHS);
