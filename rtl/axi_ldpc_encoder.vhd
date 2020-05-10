@@ -98,18 +98,29 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal axi_bit_has_data       : std_logic;
   signal axi_bit_tready_p       : std_logic;
 
+  -- Processing flags
+  signal stop_input_streams     : std_logic := '0';
+  signal wait_frame_completion  : std_logic := '0';
+
   signal axi_bit_frame_type     : frame_type_t;
 
   -- AXI data synchronized to the frame RAM output data
-  signal axi_bit_tdata_sampled  : std_logic;
+  signal axi_bit_tdata0         : std_logic;
+  signal axi_bit_tdata1         : std_logic;
 
   signal table_offset           : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+  signal get_next_data          : std_logic;
 
   signal frame_ram_ready        : std_logic;
   signal frame_bits_remaining   : unsigned(numbits(max(DVB_N_LDPC)) - 1 downto 0);
 
   -- Interface with the frame RAM
+  signal table_ram_en           : std_logic;
   signal frame_ram_en           : std_logic;
+  signal dbg_addr_in_0          : boolean;
+  signal dbg_addr_out_0         : boolean;
+  signal dbg_wr_0               : boolean;
+
   signal frame_addr_in          : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
 
   -- Frame RAM output
@@ -126,7 +137,6 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   -- Frame RAM data loop
   signal frame_ram_wrdata       : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
 
-  signal extract_frame_data     : std_logic;
   signal frame_addr_rst         : std_logic;
   signal frame_addr_rst_reg0    : std_logic;
 
@@ -149,6 +159,9 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal frame_bit_index_i      : natural range 0 to ROM_DATA_WIDTH - 1;
 
 begin
+
+  dbg_addr_in_0 <= True when frame_addr_in = 0 and frame_ram_en = '1' else False;
+  dbg_addr_out_0 <= True when unsigned(frame_addr_out) = 0 and frame_ram_ready = '1' else False;
 
   -------------------
   -- Port mappings --
@@ -328,7 +341,7 @@ begin
       clk     => clk,
       clken   => '1',
       --
-      din     => extract_frame_data,
+      din     => stop_input_streams,
       -- Edges detected
       rising  => frame_addr_rst,
       falling => open,
@@ -339,13 +352,13 @@ begin
   ------------------------------
   -- Values synchronized with data from pipeline_context_ram
   frame_bit_index_i      <= to_integer(unsigned(frame_bit_index));
-  s_ldpc_tready          <= table_handle_ready and not (rst or extract_frame_data);
+  s_ldpc_tready          <= table_handle_ready and not (rst or stop_input_streams);
 
   -- AXI slave specifics
   axi_bit_dv             <= '1' when axi_bit.tready = '1' and axi_bit.tvalid = '1' else '0';
   axi_ldpc_dv            <= '1' when axi_ldpc.tready = '1' and axi_ldpc.tvalid = '1' else '0';
   s_ldpc_dv              <= '1' when s_ldpc_tready = '1' and s_ldpc_tvalid = '1' else '0';
-  axi_bit.tready         <= axi_bit_tready_p and not (rst or extract_frame_data);
+  axi_bit.tready         <= axi_bit_tready_p and not (rst or stop_input_streams);
 
   -- Mux output data
   axi_out.tready         <= m_tready and wr_encoded_data;
@@ -359,7 +372,9 @@ begin
   m_tvalid               <= (axi_passthrough.tvalid and axi_passthrough.tready and not wr_encoded_data)
                              or axi_out.tvalid;
 
-  frame_in_last          <= extract_frame_data when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
+  frame_ram_en           <= table_ram_en and (axi_bit_has_data or stop_input_streams);
+
+  frame_in_last          <= stop_input_streams when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
                             else '0';
 
   -- Frame RAM data width is fixed to 16, so the mask is 2 and will only ever going to
@@ -380,35 +395,17 @@ begin
     variable completed_table : boolean := False;
     variable completed_data  : boolean := False;
   begin
-    if rst = '1' then
-      axi_bit_tready_p     <= '1';
-      encoded_wr_en_mask   <= '0';
-      extract_frame_data   <= '0';
-      table_handle_ready   <= '1';
+    if rising_edge(clk) then
 
-      completed_data       := False;
-      completed_table      := False;
-      has_axi_data         := False;
-      has_table_data       := False;
+      dbg_wr_0 <= dbg_addr_out_0;
 
-      encoded_wr_last      <= 'U';
-      frame_addr_in        <= (others => 'U');
-      frame_addr_rst_reg0  <= 'U';
-      frame_bit_index      <= (others => 'U');
-      frame_bits_remaining <= (others => 'U');
-      frame_out_last       <= 'U';
-      frame_out_mask       <= (others => 'U');
-      frame_ram_en         <= 'U';
-      table_offset         <= (others => 'U');
-
-    elsif rising_edge(clk) then
-
-      frame_ram_en          <= '0';
-      frame_bit_index       <= table_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
-      frame_out_last        <= frame_in_last;
-      frame_out_mask        <= frame_in_mask;
-      encoded_wr_last       <= frame_out_last;
-      encoded_wr_mask       <= frame_out_mask;
+      encoded_wr_last <= frame_out_last;
+      encoded_wr_mask <= frame_out_mask;
+      frame_bit_index <= table_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
+      frame_out_last  <= frame_in_last;
+      frame_out_mask  <= frame_in_mask;
+      table_ram_en    <= '0';
+      get_next_data   <= '0';
 
       if frame_ram_ready = '1' then
         frame_addr_rst_reg0 <= frame_addr_rst;
@@ -416,24 +413,25 @@ begin
 
       if frame_addr_rst_reg0 = '1' then
         encoded_wr_en_mask  <= '1';
-      elsif encoded_wr_last = '1' then
-        encoded_wr_en_mask  <= '0';
+      elsif encoded_wr_last and encoded_wr_en and encoded_wr_en_mask then
+        encoded_wr_en_mask    <= '0';
+        wait_frame_completion <= '1';
       end if;
 
       -- Frame RAM addressing depends if we're calculating the codes or extracting them
+      -- (stop_input_streams being 0 or 1 respectively)
       -- Respect AXI master adapter
-      ldpc_append_addr_ctrl : if extract_frame_data = '1' and encoded_wr_full = '0' then
+      ldpc_append_addr_ctrl : if stop_input_streams = '1' and encoded_wr_full = '0' and wait_frame_completion = '0' then
         -- When extracting frame data, we need to complete the given frame. Since the
         -- frame size is not always an integer multiple of the frame length, we also need
         -- to check if data bit cnt has wrapped (MSB is 1).
         if frame_addr_rst = '1' then
-          frame_ram_en         <= '1';
+          table_ram_en         <= '1';
           frame_addr_in        <= (others => '0');
         elsif frame_out_last = '1' then
           frame_addr_in        <= (others => '0');
-          extract_frame_data   <= '0';
         else
-          frame_ram_en         <= '1';
+          table_ram_en         <= '1';
           frame_addr_in        <= frame_addr_in + 1;
           frame_bits_remaining <= frame_bits_remaining - FRAME_RAM_DATA_WIDTH;
         end if;
@@ -445,10 +443,11 @@ begin
         has_table_data     := True;
 
         table_offset       <= s_ldpc_offset;
+        get_next_data      <= s_ldpc_next;
         table_handle_ready <= '0';
         frame_addr_in      <= unsigned(s_ldpc_offset(ROM_DATA_WIDTH - 1 downto numbits(FRAME_RAM_DATA_WIDTH)));
 
-        if extract_frame_data = '0' and s_ldpc_next = '1' then
+        if stop_input_streams = '0' and s_ldpc_next = '1' then
           axi_bit_tready_p <= '1';
         end if;
 
@@ -486,27 +485,58 @@ begin
         end if;
       end if;
 
+      -- if encoded_wr_en and encoded_wr_en_mask and encoded_wr_last then
+      --   stop_input_streams <= '0';
+      -- end if;
+
+      -- Clear flags when the output frame makes its way completely
+      if axi_out.tready = '1' and axi_out.tvalid = '1' and axi_out.tlast = '1' then
+        has_axi_data          := False;
+        axi_bit_tready_p      <= '1';
+        stop_input_streams    <= '0';
+        wait_frame_completion <= '0';
+      end if;
+
       -- Once we completed both the table and the data, switch to extracting data from the
       -- frame RAM
       if completed_table and completed_data then
         completed_table    := False;
         completed_data     := False;
-        extract_frame_data <= '1';
+        stop_input_streams <= '1';
       end if;
 
+      -- Insert an entry into the processing pipeline whenever we have both table and data
       if has_axi_data and has_table_data then
-        frame_ram_en <= '1';
+        table_ram_en <= '1';
       end if;
 
-      if encoded_wr_en_mask = '0' and has_axi_data then
+      -- Accept another table entry every time we have AXI data, unless we're doing the
+      -- post frame processing
+      if has_axi_data and encoded_wr_en_mask = '0' then
         has_table_data     := False;
         table_handle_ready <= '1';
       end if;
 
+      -- Only accept another AXI data bit when the the table interface allows for it
       if has_table_data and s_ldpc_dv = '1' and s_ldpc_next = '0' then
         has_axi_data       := False;
         axi_bit_tready_p   <= '1';
       end if;
+
+      -- Reset
+      if rst = '1' then
+        axi_bit_tready_p     <= '1';
+        encoded_wr_en_mask   <= '0';
+        stop_input_streams   <= '0';
+        table_handle_ready   <= '1';
+
+        completed_data       := False;
+        completed_table      := False;
+        has_axi_data         := False;
+        has_table_data       := False;
+
+      end if;
+
     end if;
   end process; -- }} -------------------------------------------------------------------
 
@@ -538,13 +568,13 @@ begin
       -- calculating the actual final XOR'ed value
       if frame_ram_ready = '1' then
         if encoded_wr_en_mask = '0' then
-          frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata_sampled
+          frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata1
                                                  xor to_01(frame_ram_rddata(frame_bit_index_i));
         else
           frame_ram_wrdata <= (others => '0');
         end if;
 
-        if frame_ram_ready = '1' and extract_frame_data = '1' then
+        if frame_ram_ready = '1' and stop_input_streams = '1' then
         -- Calculate the final XOR between output bits
           for i in 1 to FRAME_RAM_DATA_WIDTH - 1 loop
             xored_data(i) := frame_ram_rddata(i) xor xored_data(i - 1);
@@ -562,22 +592,21 @@ begin
   -- The config ports are valid at the first word of the frame, but we must not rely on
   -- the user keeping it unchanged. Hide this on a block to leave the core code a bit
   -- cleaner
-  config_sample_block  : block -- {{ ---------------------------------------------------
-    signal tdata : std_logic;
+  axi_bit_ctrl_block : block -- {{ ---------------------------------------------------
   begin
 
     process(clk, rst)
     begin
       if rst = '1' then
-        axi_bit_first_word    <= '1';
-        wr_encoded_data       <= '0';
+        axi_bit_first_word <= '1';
+        wr_encoded_data    <= '0';
 
         -- We don't want things muxed with rst here
-        axi_bit_tdata_sampled <= 'U';
-        tdata                 <= 'U';
+        axi_bit_tdata1     <= 'U';
+        axi_bit_tdata0     <= 'U';
       elsif rising_edge(clk) then
 
-        axi_bit_tdata_sampled <= tdata;
+        axi_bit_tdata1 <= axi_bit_tdata0;
 
         -- Switch to
         if axi_passthrough.tvalid = '1' and axi_passthrough.tready = '1' and axi_passthrough.tlast = '1' then
@@ -588,19 +617,19 @@ begin
           wr_encoded_data <= '0';
         end if;
 
-        if axi_bit.tready = '1' then
-          axi_bit_has_data    <= '0';
+        if get_next_data = '1' then
+          axi_bit_has_data   <= '0';
         end if;
 
         if axi_bit_dv = '1' then
           axi_bit_has_data   <= '1';
           axi_bit_first_word <= axi_bit.tlast;
-          tdata              <= axi_bit.tdata(0);
+          axi_bit_tdata0     <= axi_bit.tdata(0);
         end if;
 
       end if;
     end process;
-  end block config_sample_block; -- }} -------------------------------------------------
+  end block axi_bit_ctrl_block; -- }} -------------------------------------------------
 
 end axi_ldpc_encoder;
 

@@ -19,7 +19,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with DVB FPGA.  If not, see <http://www.gnu.org/licenses/>.
 
--- vunit: run_all_in_same_sim
+-- unit: run_all_in_same_sim
 
 use std.textio.all;
 
@@ -217,6 +217,8 @@ begin
   ------------------------------
   clk <= not clk after CLK_PERIOD/2;
 
+  test_runner_watchdog(runner, 10 ms);
+
   m_data_valid <= axi_master.tvalid = '1' and axi_master.tready = '1';
   s_data_valid <= axi_slave.tvalid = '1' and axi_slave.tready = '1';
 
@@ -322,7 +324,7 @@ begin
 
       walk(32);
 
-      set_timeout(runner, 1 ms);
+      set_timeout(runner, 10 ms);
 
       if run("back_to_back") then
         data_probability   <= 1.0;
@@ -480,6 +482,8 @@ begin
     type ram_t is array (0 to 4095) of std_logic_vector(15 downto 0);
     signal dut_ram : ram_t;
 
+    signal encoded_wr_en : std_logic;
+
   begin
 
     dbg_ldpc_accumulate : process -- {{ ------------------------------------------------
@@ -489,7 +493,7 @@ begin
       variable msg              : msg_t;
       variable frame_cnt        : natural := 0;
 
-      procedure enqueue_frame_ram_check ( -- {{ ----------------------------------------
+      procedure check_frame_ram_write ( -- {{ ------------------------------------------
         constant offset_addr : in natural;
         constant data        : in std_logic_vector(15 downto 0)) is
         variable msg         : msg_t := new_msg;
@@ -497,14 +501,14 @@ begin
         push(msg, offset_addr);
         push(msg, data);
         send(net, offset_checker_p, msg);
-      end procedure; -- }} ---------------------------------------------------------------
+      end procedure; -- }} -------------------------------------------------------------
 
-      procedure handle_config ( -- {{ ----------------------------------------------------
+      procedure handle_config ( -- {{ --------------------------------------------------
         constant config : config_t ) is
         constant table  : ldpc_table_t := get_ldpc_table(config.frame_type, config.code_rate);
         variable mem    : std_logic_vector_2d_t((table.length + 15) / 16 - 1 downto 0)(15 downto 0);
 
-        procedure accumulate_ldpc ( -- {{ ------------------------------------------------
+        procedure accumulate_ldpc ( -- {{ ----------------------------------------------
           constant table            : in ldpc_table_t) is
 
           variable rows             : natural := 0;
@@ -515,6 +519,8 @@ begin
           variable data_index       : natural := 0;
           variable tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
           variable data_bit         : std_logic;
+          variable is_last          : boolean := False;
+          variable max_offset       : natural := 0;
         begin
           mem := (others => (others => '0'));
 
@@ -526,6 +532,9 @@ begin
               if data_index = 0 then
                 wait until rising_edge(clk) and axi_master.tvalid = '1' and axi_master.tready = '1';
                 tdata := axi_master.tdata;
+                if axi_master.tlast = '1' then
+                  is_last := True;
+                end if;
               end if;
 
               data_bit := tdata(DATA_WIDTH - 1 - data_index);
@@ -537,48 +546,41 @@ begin
               end if;
 
               for row in 1 to rows loop
-                offset := (table.data(line_no)(row) + (input_bit_number mod DVB_LDPC_GROUP_LENGTH) * table.q) mod table.length;
+                offset := (
+                  table.data( line_no )( row ) + ( input_bit_number mod DVB_LDPC_GROUP_LENGTH ) * table.q
+                ) mod table.length;
 
                 offset_addr := offset / 16;
                 offset_bit  := offset mod 16;
 
+                max_offset := max(offset, max_offset);
+
                 mem(offset_addr)(offset_bit) := data_bit xor mem(offset_addr)(offset_bit);
 
-                -- enqueue_frame_ram_check(offset_addr, mem(offset_addr));
-
-                -- if offset = 1078 then
-                -- if axi_master.tlast = '1' then
-                -- if input_bit_number < 32 or axi_master.tlast = '1' then
-                --   debug(
-                --     logger,
-                --     sformat(
-                --       "[%2d] mem(%4d)(%2d) = %r  || axi_master.tdata = %r (offset = %5d, data_bit = %r)",
-                --       fo(data_index),
-                --       fo(offset_addr),
-                --       fo(offset_bit),
-                --       fo(mem(offset_addr)),
-                --       fo(tdata),
-                --       fo(offset),
-                --       fo(data_bit)
-                --     )
-                --   );
-                -- end if;
+                check_frame_ram_write(offset_addr, mem(offset_addr));
 
               end loop;
 
-              if axi_master.tlast = '1' then
+              if is_last and data_index = 0 then
                 debug(
                   logger,
                   sformat(
-                    "Last line=%d (out of %d), bit count=%d, last offset=%d",
+                    "Last line=%d (out of %d), bit count=%d, last offset=%d, data_index=%d, max_offset=%d",
                     fo(line_no),
                     fo(table.data'length - 1),
                     fo(input_bit_number),
-                    fo(offset)
+                    fo(offset),
+                    fo(data_index),
+                    fo(max_offset)
                   )
                 );
 
-                -- enqueue_frame_ram_check(0, (others => '0'));
+                -- The DUT will clear the addresses when calculating the final parity bits. Just need to make
+                -- sure we round to the next integer in the event the max offset is not an integer multiple
+                -- of the frame RAM data width
+                for i in 0 to (max_offset + 15) / 16 loop
+                  check_frame_ram_write(i, (others => '0'));
+                end loop;
 
                 return;
               end if;
@@ -628,12 +630,20 @@ begin
         procedure compare_ram is -- {{ -----------------------------------------------------
           variable errors : natural := 0;
         begin
-          -- for i in 0 to mem'length - 1 loop
-          for i in 0 to 7 loop
+          debug(logger, "Comparing DUT and expected RAM contents");
+
+          for i in 0 to mem'length - 1 loop
+          -- for i in 0 to 7 loop
             if to_01(dut_ram(i)) /= to_01(mem(i)) then
               warning(
                 logger,
-                sformat("[frame=%d, word=%4d] dut_ram = %r, mem = %r", fo(frame_cnt), fo(i), fo(dut_ram(i)), fo(mem(i))
+                sformat(
+                  "[frame=%d] address=%4d (%r) => expected %r but found %r",
+                  fo(frame_cnt),
+                  fo(i),
+                  fo(to_unsigned(i, numbits(mem'length))),
+                  fo(mem(i)),
+                  fo(dut_ram(i))
               )
             );
             errors := errors + 1;
@@ -643,7 +653,7 @@ begin
           if errors = 0 then
             info(logger, "DUT RAM and TB RAM match");
           else
-              warning(
+              error(
                 logger,
                 sformat(
                   "Frame=%d, DUT RAM and TB RAM have %d / %d (%d \%) differences",
@@ -658,9 +668,11 @@ begin
         end procedure; -- }} ---------------------------------------------------------------
 
       begin
-        info(logger, sformat("Handling config: %s. Table length is %s", to_string(config), fo(table.length)));
+        info(logger, sformat("Handling config: %s. Table length is %d", to_string(config), fo(table.length)));
 
         accumulate_ldpc(table);
+
+        wait until rising_edge(clk) and encoded_wr_en = '1';
 
         compare_ram;
 
@@ -704,7 +716,8 @@ begin
 
       wait until rst = '0';
 
-      init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/ram", "/axi_ldpc_encoder_tb/whitebox_monitor/dut_ram", 1);
+      init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/ram", "/axi_ldpc_encoder_tb/whitebox_monitor/dut_ram", 0);
+      init_signal_spy("/axi_ldpc_encoder_tb/dut/encoded_wr_en", "/axi_ldpc_encoder_tb/whitebox_monitor/encoded_wr_en", 0);
 
       while True loop
         receive(net, self, msg);
@@ -728,9 +741,9 @@ begin
       signal_spy_p : process
       begin
         wait until rst = '0';
-        init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/wren_a", "ram_we", 1);
-        init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/addr_a", "ram_wr_addr", 1);
-        init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/wrdata_a", "ram_wr_data", 1);
+        init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/wren_a", "ram_we", 0);
+        init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/addr_a", "ram_wr_addr", 0);
+        init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/wrdata_a", "ram_wr_data", 0);
         wait;
       end process;
 
@@ -747,36 +760,41 @@ begin
           wait until rising_edge(clk) and ram_we = '1';
 
           if not has_message(self) then
-            warning(
+            debug(
               logger,
               sformat(
-                "Detected RAM wr (addr=%4d, data=%r) but got nothing to compare to",
+                "[frame=%d] Detected RAM wr (addr=%4dd / %r, data=%r) but got nothing to compare to",
+                fo(s_frame_cnt),
+                fo(ram_wr_addr),
                 fo(ram_wr_addr),
                 fo(ram_wr_data)
               )
             );
+          else
+            receive(net, self, msg);
+
+            exp_addr := pop(msg);
+            exp_data := pop(msg);
+
+            if unsigned(ram_wr_addr) /= exp_addr or ram_wr_data /= exp_data then
+              error(
+                logger,
+                sformat(
+                  "[frame=%d, cnt=%3d] Expected write: (addr=%4dd / %r, data=%r), got (addr=%4d / %r, data=%r)",
+                  fo(s_frame_cnt),
+                  fo(cnt),
+                  fo(exp_addr),
+                  fo(to_unsigned(exp_addr, 12)),
+                  fo(exp_data),
+                  fo(ram_wr_addr),
+                  fo(ram_wr_addr),
+                  fo(ram_wr_data)
+                )
+              );
+            end if;
+
+            cnt := cnt + 1;
           end if;
-
-          receive(net, self, msg);
-
-          exp_addr := pop(msg);
-          exp_data := pop(msg);
-
-          if unsigned(ram_wr_addr) /= exp_addr or ram_wr_data /= exp_data then
-            error(
-              logger,
-              sformat(
-                "[%3d] Expected write: (addr=%4d, data=%r), got (addr=%4d, data=%r)",
-                fo( cnt ),
-                fo( exp_addr ),
-                fo( exp_data ),
-                fo( ram_wr_addr ),
-                fo( ram_wr_data )
-              )
-            );
-          end if;
-
-          cnt := cnt + 1;
 
         end loop;
       end process; -- }}
