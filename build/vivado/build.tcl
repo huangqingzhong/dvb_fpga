@@ -18,10 +18,10 @@
 # You should have received a copy of the GNU General Public License
 # along with DVB FPGA.  If not, see <http://www.gnu.org/licenses/>.
 
-create_project dvbs2_tx build/vivado/dvbs2_tx -part xczu4cg-sfvc784-1LV-i
+create_project dvbs2_tx build/vivado/dvbs2_tx -part xczu4cg-sfvc784-1LV-i -force
 
-add_files /home/asouto/dev/dvb_fpga/third_party/hdl_string_format/src/str_format_pkg.vhd
-set_property library str_format [ get_files /home/asouto/dev/dvb_fpga/third_party/hdl_string_format/src/str_format_pkg.vhd ]
+set_property library str_format [ add_files [ glob third_party/hdl_string_format/src/str_format_pkg.vhd ] ]
+set_property library fpga_cores [ add_files [ glob third_party/fpga_cores/src/*.vhd ] ]
 
 add_files [ glob rtl/bch_generated/*.vhd ]
 add_files [ glob rtl/*.vhd ]
