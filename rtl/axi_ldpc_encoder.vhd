@@ -117,9 +117,6 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   -- Interface with the frame RAM
   signal table_ram_en           : std_logic;
   signal frame_ram_en           : std_logic;
-  signal dbg_addr_in_0          : boolean;
-  signal dbg_addr_out_0         : boolean;
-  signal dbg_wr_0               : boolean;
 
   signal frame_addr_in          : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
 
@@ -142,7 +139,7 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
 
   signal table_handle_ready     : std_logic;
 
-  signal encoded_wr_en_mask     : std_logic;
+  signal encoded_wr_en_is_valid : std_logic;
   signal encoded_wr_en          : std_logic;
   signal encoded_wr_full        : std_logic;
   signal encoded_wr_data        : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
@@ -159,9 +156,6 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal frame_bit_index_i      : natural range 0 to ROM_DATA_WIDTH - 1;
 
 begin
-
-  dbg_addr_in_0 <= True when frame_addr_in = 0 and frame_ram_en = '1' else False;
-  dbg_addr_out_0 <= True when unsigned(frame_addr_out) = 0 and frame_ram_ready = '1' else False;
 
   -------------------
   -- Port mappings --
@@ -294,8 +288,8 @@ begin
         -- Usual ports
         clk      => clk,
         reset    => rst,
-        -- wanna-be AXI interface
-        wr_en    => encoded_wr_en and encoded_wr_en_mask,
+        -- Wanna-be AXI interface
+        wr_en    => encoded_wr_en and encoded_wr_en_is_valid,
         wr_full  => encoded_wr_full,
         wr_data  => wr_data,
         wr_last  => encoded_wr_last,
@@ -388,16 +382,18 @@ begin
   ---------------
   -- Processes --
   ---------------
-  axi_flow_ctrl_p : process(clk, rst) -- {{ --------------------------------------------
+  axi_flow_ctrl_p : process(clk) -- {{ -------------------------------------------------
+    -- Use variables for some processing flags to allow setting and checking a condition
+    -- on the same cycle
     variable has_table_data  : boolean := False;
     variable has_axi_data    : boolean := False;
 
+    -- Marks when the entire LDPC table has been received
     variable completed_table : boolean := False;
+    -- Marks when the entire data frame has been received
     variable completed_data  : boolean := False;
   begin
     if rising_edge(clk) then
-
-      dbg_wr_0 <= dbg_addr_out_0;
 
       encoded_wr_last <= frame_out_last;
       encoded_wr_mask <= frame_out_mask;
@@ -411,16 +407,16 @@ begin
         frame_addr_rst_reg0 <= frame_addr_rst;
       end if;
 
+      -- Wrap encoded_wr_en with a valid mask to avoid writing invalid data
       if frame_addr_rst_reg0 = '1' then
-        encoded_wr_en_mask  <= '1';
-      elsif encoded_wr_last and encoded_wr_en and encoded_wr_en_mask then
-        encoded_wr_en_mask    <= '0';
-        wait_frame_completion <= '1';
+        encoded_wr_en_is_valid  <= '1';
+      elsif encoded_wr_last and encoded_wr_en and encoded_wr_en_is_valid then
+        encoded_wr_en_is_valid <= '0';
+        wait_frame_completion  <= '1';
       end if;
 
       -- Frame RAM addressing depends if we're calculating the codes or extracting them
       -- (stop_input_streams being 0 or 1 respectively)
-      -- Respect AXI master adapter
       ldpc_append_addr_ctrl : if stop_input_streams = '1' and encoded_wr_full = '0' and wait_frame_completion = '0' then
         -- When extracting frame data, we need to complete the given frame. Since the
         -- frame size is not always an integer multiple of the frame length, we also need
@@ -428,9 +424,7 @@ begin
         if frame_addr_rst = '1' then
           table_ram_en         <= '1';
           frame_addr_in        <= (others => '0');
-        elsif frame_out_last = '1' then
-          frame_addr_in        <= (others => '0');
-        else
+        elsif frame_out_last = '0' then
           table_ram_en         <= '1';
           frame_addr_in        <= frame_addr_in + 1;
           frame_bits_remaining <= frame_bits_remaining - FRAME_RAM_DATA_WIDTH;
@@ -439,7 +433,7 @@ begin
       end if ldpc_append_addr_ctrl;
 
       -- AXI LDPC table control
-      if s_ldpc_dv = '1' then
+      ldpc_table_control : if s_ldpc_dv = '1' then
         has_table_data     := True;
 
         table_offset       <= s_ldpc_offset;
@@ -454,10 +448,10 @@ begin
         if s_ldpc_tlast = '1' then
           completed_table := True;
         end if;
-      end if;
+      end if ldpc_table_control;
 
       -- AXI frame data control
-      if axi_bit_dv = '1' then
+      ldpc_data_control : if axi_bit_dv = '1' then
         has_axi_data     := True;
         axi_bit_tready_p <= '0';
 
@@ -483,11 +477,7 @@ begin
         else
           frame_bits_remaining <= frame_bits_remaining - 1;
         end if;
-      end if;
-
-      -- if encoded_wr_en and encoded_wr_en_mask and encoded_wr_last then
-      --   stop_input_streams <= '0';
-      -- end if;
+      end if ldpc_data_control;
 
       -- Clear flags when the output frame makes its way completely
       if axi_out.tready = '1' and axi_out.tvalid = '1' and axi_out.tlast = '1' then
@@ -512,7 +502,7 @@ begin
 
       -- Accept another table entry every time we have AXI data, unless we're doing the
       -- post frame processing
-      if has_axi_data and encoded_wr_en_mask = '0' then
+      if has_axi_data and encoded_wr_en_is_valid = '0' then
         has_table_data     := False;
         table_handle_ready <= '1';
       end if;
@@ -525,15 +515,15 @@ begin
 
       -- Reset
       if rst = '1' then
-        axi_bit_tready_p     <= '1';
-        encoded_wr_en_mask   <= '0';
-        stop_input_streams   <= '0';
-        table_handle_ready   <= '1';
+        axi_bit_tready_p       <= '1';
+        encoded_wr_en_is_valid <= '0';
+        stop_input_streams     <= '0';
+        table_handle_ready     <= '1';
 
-        completed_data       := False;
-        completed_table      := False;
-        has_axi_data         := False;
-        has_table_data       := False;
+        completed_data         := False;
+        completed_table        := False;
+        has_axi_data           := False;
+        has_table_data         := False;
 
       end if;
 
@@ -541,7 +531,7 @@ begin
   end process; -- }} -------------------------------------------------------------------
 
   frame_ram_data_handle_p : process(clk, rst) -- {{ ------------------------------------
-    variable xored_data    : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
+    variable xored_data : std_logic_vector(FRAME_RAM_DATA_WIDTH - 1 downto 0);
   begin
     if rst = '1' then
       encoded_wr_en    <= '0';
@@ -567,7 +557,7 @@ begin
       -- Handle data coming out of the frame RAM, either by using the input data of by
       -- calculating the actual final XOR'ed value
       if frame_ram_ready = '1' then
-        if encoded_wr_en_mask = '0' then
+        if encoded_wr_en_is_valid = '0' then
           frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata1
                                                  xor to_01(frame_ram_rddata(frame_bit_index_i));
         else
@@ -581,7 +571,7 @@ begin
           end loop;
 
           -- Assign data out and decrement the bits consumed
-          encoded_wr_en    <= encoded_wr_en_mask;
+          encoded_wr_en    <= encoded_wr_en_is_valid;
           encoded_wr_data  <= xored_data;
         end if;
       end if;
