@@ -368,11 +368,11 @@ begin
   m_tdata                <= axi_passthrough.tdata when wr_encoded_data = '0' else
                             mirror_bits(axi_out.tdata);
 
-
   m_tvalid               <= (axi_passthrough.tvalid and axi_passthrough.tready and not wr_encoded_data)
                              or axi_out.tvalid;
 
-  frame_ram_en           <= table_ram_en and (axi_bit_has_data or stop_input_streams);
+  frame_ram_en           <= table_ram_en and (axi_bit_has_data or stop_input_streams) and
+                            not wait_frame_completion;
 
   frame_in_last          <= stop_input_streams when frame_bits_remaining <= FRAME_RAM_DATA_WIDTH
                             else '0';
