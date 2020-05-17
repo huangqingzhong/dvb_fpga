@@ -393,19 +393,26 @@ def main():
     #          ),
     #      )
 
-    # Only generate configs for 8 PSK since LDPC does not depend on this
-    # parameter
-    for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,),):
-        cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
-            name=config.name,
-            generics=dict(
-                test_cfg=config.getTestConfigString(
-                    input_file_path="ldpc_encoder_input.bin",
-                    reference_file_path="bit_interleaver_input.bin",
-                ),
-                NUMBER_OF_TEST_FRAMES=2,
-            ),
-        )
+    addAllConfigsTest(
+        entity=cli.library("lib").entity("axi_ldpc_encoder_tb"),
+        configs=_getAllConfigs(constellations=(ConstellationType.MOD_8PSK,),),
+        input_file_basename="ldpc_encoder_input.bin",
+        reference_file_basename="bit_interleaver_input.bin",
+    )
+
+    #  # Only generate configs for 8 PSK since LDPC does not depend on this
+    #  # parameter
+    #  for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,),):
+    #      cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
+    #          name=config.name,
+    #          generics=dict(
+    #              test_cfg=config.getTestConfigString(
+    #                  input_file_path="ldpc_encoder_input.bin",
+    #                  reference_file_path="bit_interleaver_input.bin",
+    #              ),
+    #              NUMBER_OF_TEST_FRAMES=2,
+    #          ),
+    #      )
 
     for data_width in (1, 8):
         all_configs = []
