@@ -322,7 +322,7 @@ begin
 
       walk(32);
 
-      set_timeout(runner, 10 ms);
+      set_timeout(runner, configs'length * 1 ms);
 
       if run("back_to_back") then
         data_probability   <= 1.0;
@@ -474,6 +474,7 @@ begin
     end loop;
   end process; -- }} -------------------------------------------------------------------
 
+  -- This will only work on ModelSim
   -- ghdl translate_off
   whitebox_monitor : block -- {{ -------------------------------------------------------
     -- White box checking
@@ -555,7 +556,7 @@ begin
 
                 mem(offset_addr)(offset_bit) := data_bit xor mem(offset_addr)(offset_bit);
 
-                check_frame_ram_write(offset_addr, mem(offset_addr));
+                -- check_frame_ram_write(offset_addr, mem(offset_addr));
 
               end loop;
 
@@ -725,10 +726,6 @@ begin
 
     end process; -- }} -------------------------------------------------------------------
 
-    -- This will only work on ModelSim
-    -- FIXME: This works on part of the frame and it's highly dependent on the processing
-    -- algorithm. Not sure if it's worth making this behave correctly at all times, assuming
-    -- that dbg_proc_array above already checks the integrity of the frame RAM
     frame_ram_monitor : block -- {{ ------------------------------------------------------
       constant logger    : logger_t := get_logger("frame_ram_monitor");
       signal ram_we      : std_logic;
@@ -745,57 +742,61 @@ begin
         wait;
       end process;
 
-      check_p : process -- {{ ------------------------------------------------------------
-        constant self     : actor_t := new_actor("offset_checker_p");
-        variable msg      : msg_t;
-        variable exp_addr : natural;
-        variable exp_data : std_logic_vector(15 downto 0);
-        variable cnt      : natural := 0;
-      begin
-        wait until rst = '0';
+      -- FIXME: This works on part of the frame and it's highly dependent on the
+      -- processing algorithm. Not sure if it's worth making this behave correctly at all
+      -- times, assuming that dbg_proc_array above already checks the integrity of the
+      -- frame RAM
+      -- check_p : process -- {{ ------------------------------------------------------------
+      --   constant self     : actor_t := new_actor("offset_checker_p");
+      --   variable msg      : msg_t;
+      --   variable exp_addr : natural;
+      --   variable exp_data : std_logic_vector(15 downto 0);
+      --   variable cnt      : natural := 0;
+      -- begin
+      --   wait until rst = '0';
 
-        while True loop
-          wait until rising_edge(clk) and ram_we = '1';
+      --   while True loop
+      --     wait until rising_edge(clk) and ram_we = '1';
 
-          if not has_message(self) then
-            debug(
-              logger,
-              sformat(
-                "[frame=%d] Detected RAM wr (addr=%4dd / %r, data=%r) but got nothing to compare to",
-                fo(s_frame_cnt),
-                fo(ram_wr_addr),
-                fo(ram_wr_addr),
-                fo(ram_wr_data)
-              )
-            );
-          else
-            receive(net, self, msg);
+      --     if not has_message(self) then
+      --       debug(
+      --         logger,
+      --         sformat(
+      --           "[frame=%d] Detected RAM wr (addr=%4dd / %r, data=%r) but got nothing to compare to",
+      --           fo(s_frame_cnt),
+      --           fo(ram_wr_addr),
+      --           fo(ram_wr_addr),
+      --           fo(ram_wr_data)
+      --         )
+      --       );
+      --     else
+      --       receive(net, self, msg);
 
-            exp_addr := pop(msg);
-            exp_data := pop(msg);
+      --       exp_addr := pop(msg);
+      --       exp_data := pop(msg);
 
-            if unsigned(ram_wr_addr) /= exp_addr or ram_wr_data /= exp_data then
-              error(
-                logger,
-                sformat(
-                  "[frame=%d, cnt=%3d] Expected write: (addr=%4dd / %r, data=%r), got (addr=%4d / %r, data=%r)",
-                  fo(s_frame_cnt),
-                  fo(cnt),
-                  fo(exp_addr),
-                  fo(to_unsigned(exp_addr, 12)),
-                  fo(exp_data),
-                  fo(ram_wr_addr),
-                  fo(ram_wr_addr),
-                  fo(ram_wr_data)
-                )
-              );
-            end if;
+      --       if unsigned(ram_wr_addr) /= exp_addr or ram_wr_data /= exp_data then
+      --         error(
+      --           logger,
+      --           sformat(
+      --             "[frame=%d, cnt=%3d] Expected write: (addr=%4dd / %r, data=%r), got (addr=%4d / %r, data=%r)",
+      --             fo(s_frame_cnt),
+      --             fo(cnt),
+      --             fo(exp_addr),
+      --             fo(to_unsigned(exp_addr, 12)),
+      --             fo(exp_data),
+      --             fo(ram_wr_addr),
+      --             fo(ram_wr_addr),
+      --             fo(ram_wr_data)
+      --           )
+      --         );
+      --       end if;
 
-            cnt := cnt + 1;
-          end if;
+      --       cnt := cnt + 1;
+      --     end if;
 
-        end loop;
-      end process; -- }}
+      --   end loop;
+      -- end process; -- }}
 
     end block; -- }}
 
