@@ -24,6 +24,7 @@ set_property library str_format [ add_files [ glob third_party/hdl_string_format
 set_property library fpga_cores [ add_files [ glob third_party/fpga_cores/src/*.vhd ] ]
 
 add_files [ glob rtl/bch_generated/*.vhd ]
+add_files [ glob rtl/ldpc/*.vhd ]
 add_files [ glob rtl/*.vhd ]
 
 launch_runs synth_1

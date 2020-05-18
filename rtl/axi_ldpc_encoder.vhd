@@ -154,6 +154,7 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal axi_out                : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
 
   signal frame_bit_index_i      : natural range 0 to ROM_DATA_WIDTH - 1;
+  signal s_ldpc_tready_i        : std_logic;
 
 begin
 
@@ -271,10 +272,12 @@ begin
 
   -- Can't stop reading from the frame RAM instantly, allow some slack
   frame_ram_adapter_block : block -- {{ ------------------------------------------------
-      signal wr_data   : std_logic_vector(encoded_wr_data'length + encoded_wr_mask'length - 1 downto 0);
-      signal tdata_out : std_logic_vector(encoded_wr_data'length + encoded_wr_mask'length - 1 downto 0);
+    signal wr_data   : std_logic_vector(encoded_wr_data'length + encoded_wr_mask'length - 1 downto 0);
+    signal tdata_out : std_logic_vector(encoded_wr_data'length + encoded_wr_mask'length - 1 downto 0);
+    signal wr_en     : std_logic;
   begin
 
+    wr_en             <= encoded_wr_en and encoded_wr_en_is_valid;
     wr_data           <= encoded_wr_mask & encoded_wr_data;
 
     axi_encoded.tuser <= tdata_out(tdata_out'length - 1 downto 16);
@@ -289,7 +292,7 @@ begin
         clk      => clk,
         reset    => rst,
         -- Wanna-be AXI interface
-        wr_en    => encoded_wr_en and encoded_wr_en_is_valid,
+        wr_en    => wr_en,
         wr_full  => encoded_wr_full,
         wr_data  => wr_data,
         wr_last  => encoded_wr_last,
@@ -346,12 +349,12 @@ begin
   ------------------------------
   -- Values synchronized with data from pipeline_context_ram
   frame_bit_index_i      <= to_integer(unsigned(frame_bit_index));
-  s_ldpc_tready          <= table_handle_ready and not (rst or stop_input_streams);
+  s_ldpc_tready_i        <= table_handle_ready and not (rst or stop_input_streams);
 
   -- AXI slave specifics
   axi_bit_dv             <= '1' when axi_bit.tready = '1' and axi_bit.tvalid = '1' else '0';
   axi_ldpc_dv            <= '1' when axi_ldpc.tready = '1' and axi_ldpc.tvalid = '1' else '0';
-  s_ldpc_dv              <= '1' when s_ldpc_tready = '1' and s_ldpc_tvalid = '1' else '0';
+  s_ldpc_dv              <= '1' when s_ldpc_tready_i = '1' and s_ldpc_tvalid = '1' else '0';
   axi_bit.tready         <= axi_bit_tready_p and not (rst or stop_input_streams);
 
   -- Mux output data
@@ -373,11 +376,15 @@ begin
 
   -- Frame RAM data width is fixed to 16, so the mask is 2 and will only ever going to
   -- be either 01b or 11b
-  frame_in_mask <= "00" when to_01(frame_in_last) = '0' else
+  frame_in_mask <= "00" when frame_in_last /= '1' else
                    "01" when frame_bits_remaining <= DATA_WIDTH else
                    "11";
 
+  s_ldpc_tready <= s_ldpc_tready_i;
+
+  -- synthesis translate_off
   assert not (rising_edge(clk) and frame_in_last = '1' and frame_in_mask = "00");
+  -- synthesis translate_on
 
   ---------------
   -- Processes --
@@ -410,7 +417,7 @@ begin
       -- Wrap encoded_wr_en with a valid mask to avoid writing invalid data
       if frame_addr_rst_reg0 = '1' then
         encoded_wr_en_is_valid  <= '1';
-      elsif encoded_wr_last and encoded_wr_en and encoded_wr_en_is_valid then
+      elsif encoded_wr_last = '1' and encoded_wr_en = '1' and encoded_wr_en_is_valid = '1' then
         encoded_wr_en_is_valid <= '0';
         wait_frame_completion  <= '1';
       end if;
@@ -544,7 +551,7 @@ begin
       encoded_wr_en    <= '0';
 
       -- Always return the context, will change only when needed
-      frame_ram_wrdata <= to_01(frame_ram_rddata);
+      frame_ram_wrdata <= to_01_sim(frame_ram_rddata);
 
       -- When calculating the final XOR'ed value, the first bit will depend on the
       -- address. We can safely assign here and avoid extra logic levels on the FF control
@@ -559,7 +566,7 @@ begin
       if frame_ram_ready = '1' then
         if encoded_wr_en_is_valid = '0' then
           frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata1
-                                                 xor to_01(frame_ram_rddata(frame_bit_index_i));
+                                                 xor to_01_sim(frame_ram_rddata(frame_bit_index_i));
         else
           frame_ram_wrdata <= (others => '0');
         end if;
