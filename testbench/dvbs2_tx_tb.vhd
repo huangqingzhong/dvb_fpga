@@ -34,6 +34,9 @@ use osvvm.RandomPkg.all;
 library str_format;
 use str_format.str_format_pkg.all;
 
+library fpga_cores;
+use fpga_cores.common_pkg.all;
+
 library fpga_cores_sim;
 use fpga_cores_sim.testbench_utils_pkg.all;
 use fpga_cores_sim.file_utils_pkg.all;
@@ -99,6 +102,14 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
   signal m_tlast            : std_logic;
   signal m_data_valid       : boolean;
 
+  -- AXI LDPC table input
+  signal m_ldpc_tready     : std_logic;
+  signal m_ldpc_tvalid     : std_logic;
+  signal m_ldpc_offset     : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+  signal m_ldpc_next       : std_logic;
+  signal m_ldpc_tuser      : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+  signal m_ldpc_tlast      : std_logic;
+
   -- AXI output
   signal s_tvalid           : std_logic;
   signal s_tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
@@ -133,6 +144,13 @@ begin
       s_tdata           => m_tdata,
       s_tlast           => m_tlast,
       s_tready          => m_tready,
+
+      s_ldpc_tready     => m_ldpc_tready,
+      s_ldpc_tvalid     => m_ldpc_tvalid,
+      s_ldpc_offset     => m_ldpc_offset,
+      s_ldpc_next       => m_ldpc_next,
+      s_ldpc_tuser      => m_ldpc_tuser,
+      s_ldpc_tlast      => m_ldpc_tlast,
 
       -- AXI output
       m_tready          => s_tready,
