@@ -31,7 +31,7 @@ package dvb_utils_pkg is
   constant FECFRAME_NORMAL_BIT_LENGHT : integer := 64_800;
 
   -- Sizes
-  constant DVB_N_LDPC : integer_vector := (FECFRAME_SHORT_BIT_LENGTH, FECFRAME_NORMAL_BIT_LENGHT);
+  constant DVB_N_LDPC : integer_vector_t := (FECFRAME_SHORT_BIT_LENGTH, FECFRAME_NORMAL_BIT_LENGHT);
 
   type frame_type_t is (not_set, fecframe_normal, fecframe_short);
 

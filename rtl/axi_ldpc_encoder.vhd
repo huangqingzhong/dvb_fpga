@@ -164,7 +164,7 @@ begin
   -- Duplicate input stream, one leaf will connect to the output and the other to the
   -- actual LDPC calculation that will be appended
   input_duplicate_block : block -- {{ --------------------------------------------------
-    constant WIDTHS : integer_vector := (
+    constant WIDTHS : integer_vector_t := (
       0 => DATA_WIDTH,
       1 => 1,
       2 => FRAME_TYPE_WIDTH,
