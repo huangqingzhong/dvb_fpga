@@ -36,18 +36,17 @@ library str_format;
 use str_format.str_format_pkg.all;
 
 library fpga_cores;
-use fpga_cores.common_pkg.all;
 use fpga_cores.axi_pkg.all;
+use fpga_cores.common_pkg.all;
 
 library fpga_cores_sim;
+use fpga_cores_sim.axi_stream_bfm_pkg.all;
 use fpga_cores_sim.file_utils_pkg.all;
 use fpga_cores_sim.testbench_utils_pkg.all;
-use fpga_cores_sim.axi_stream_bfm_pkg.all;
 
 use work.dvb_sim_utils_pkg.all;
 use work.dvb_utils_pkg.all;
 use work.ldpc_pkg.all;
-use work.ldpc_tables_pkg.all;
 
 -- ghdl translate_off
 library modelsim_lib;
