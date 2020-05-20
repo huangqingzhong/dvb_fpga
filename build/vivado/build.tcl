@@ -24,11 +24,11 @@ set_property library str_format [ add_files [ glob third_party/hdl_string_format
 set_property library fpga_cores [ add_files [ glob third_party/fpga_cores/src/*.vhd ] ]
 
 add_files [ glob rtl/bch_generated/*.vhd ]
-add_files [ glob rtl/ldpc/*.vhd ]
+add_files [ glob rtl/ldpc/ldpc_pkg.vhd ]
 add_files [ glob rtl/*.vhd ]
 
 # WARNING: [Synth 8-6849] Infeasible attribute ram_style = "block" set for RAM "ldpc_encoder_u/frame_ram_u/ram_u/ram_reg",trying to implement using LUTRAM
-set_msg_config -id "Synth 8-6849" -new_severity ERROR
+set_msg_config -id "Synth 8-6849" -new_severity {CRITICAL WARNING}
 
 set_property STEPS.SYNTH_DESIGN.ARGS.ASSERT true [get_runs synth_1]
 
