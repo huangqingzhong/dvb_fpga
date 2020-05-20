@@ -27,6 +27,11 @@ add_files [ glob rtl/bch_generated/*.vhd ]
 add_files [ glob rtl/ldpc/*.vhd ]
 add_files [ glob rtl/*.vhd ]
 
+# WARNING: [Synth 8-6849] Infeasible attribute ram_style = "block" set for RAM "ldpc_encoder_u/frame_ram_u/ram_u/ram_reg",trying to implement using LUTRAM
+set_msg_config -id "Synth 8-6849" -new_severity ERROR
+
+set_property STEPS.SYNTH_DESIGN.ARGS.ASSERT true [get_runs synth_1]
+
 launch_runs synth_1
 wait_on_run synth_1
 
