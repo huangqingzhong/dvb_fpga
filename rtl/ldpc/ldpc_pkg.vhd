@@ -25,6 +25,7 @@ use ieee.numeric_std.all;
 library fpga_cores;
 use fpga_cores.common_pkg.all;
 
+use work.ldpc_tables_pkg.all;
 use work.dvb_utils_pkg.all;
 
 package ldpc_pkg is
@@ -35,143 +36,126 @@ package ldpc_pkg is
   --
   constant DVB_LDPC_GROUP_LENGTH : natural := 360;
 
-  type ldpc_q_array_t is array (natural range <>) of unsigned(LDPC_Q_WIDTH - 1 downto 0);
+  type ldpc_table_t is record
+    data   : integer_2d_array_t;
+    q      : natural;
+    length : natural;
+  end record;
 
-  constant LDPC_Q_ROM : ldpc_q_array_t;
-
-  function get_ldpc_q (
-    constant frame_type : frame_type_t;
-    constant code_rate : code_rate_t) return natural;
-
-  -- impure function ldpc_table_to_rom (
-  --   constant table      : integer_2d_array_t;
-  --   constant data_width : natural
-  -- ) return std_logic_vector_2d_t;
+  function get_ldpc_table (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t)
+  return ldpc_table_t;
 
 end ldpc_pkg;
 
 package body ldpc_pkg is
 
-  function get_ldpc_q (
-    constant frame_type : frame_type_t;
-    constant code_rate : code_rate_t) return natural is
+  function get_table (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t)
+  return integer_2d_array_t is
   begin
 
-    if    frame_type = FECFRAME_SHORT  and code_rate = C1_4    then return 36;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C1_3    then return 30;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C2_5    then return 27;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C1_2    then return 25;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C3_5    then return 18;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C2_3    then return 15;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C3_4    then return 12;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C4_5    then return 10;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C5_6    then return 8;
-    elsif frame_type = FECFRAME_SHORT  and code_rate = C8_9    then return 5;
-    -- elsif frame_type = FECFRAME_SHORT  and code_rate = C9_10   then return 0;
-    -- elsif frame_type = FECFRAME_SHORT  and code_rate = not_set then return 0;
+    if frame_type = fecframe_short   and code_rate = C4_5  then return LDPC_TABLE_FECFRAME_SHORT_C4_5;    end if;
+    if frame_type = fecframe_short   and code_rate = C8_9  then return LDPC_TABLE_FECFRAME_SHORT_C8_9;    end if;
+    if frame_type = fecframe_normal  and code_rate = C8_9  then return LDPC_TABLE_FECFRAME_NORMAL_C8_9;   end if;
+    if frame_type = fecframe_normal  and code_rate = C9_10 then return LDPC_TABLE_FECFRAME_NORMAL_C9_10;  end if;
+    if frame_type = fecframe_short   and code_rate = C1_2  then return LDPC_TABLE_FECFRAME_SHORT_C1_2;    end if;
+    if frame_type = fecframe_normal  and code_rate = C1_2  then return LDPC_TABLE_FECFRAME_NORMAL_C1_2;   end if;
+    if frame_type = fecframe_short   and code_rate = C1_4  then return LDPC_TABLE_FECFRAME_SHORT_C1_4;    end if;
+    if frame_type = fecframe_short   and code_rate = C1_3  then return LDPC_TABLE_FECFRAME_SHORT_C1_3;    end if;
+    if frame_type = fecframe_short   and code_rate = C2_5  then return LDPC_TABLE_FECFRAME_SHORT_C2_5;    end if;
+    if frame_type = fecframe_short   and code_rate = C3_5  then return LDPC_TABLE_FECFRAME_SHORT_C3_5;    end if;
+    if frame_type = fecframe_short   and code_rate = C2_3  then return LDPC_TABLE_FECFRAME_SHORT_C2_3;    end if;
+    if frame_type = fecframe_short   and code_rate = C3_4  then return LDPC_TABLE_FECFRAME_SHORT_C3_4;    end if;
+    if frame_type = fecframe_short   and code_rate = C5_6  then return LDPC_TABLE_FECFRAME_SHORT_C5_6;    end if;
+    if frame_type = fecframe_normal  and code_rate = C1_4  then return LDPC_TABLE_FECFRAME_NORMAL_C1_4;   end if;
+    if frame_type = fecframe_normal  and code_rate = C1_3  then return LDPC_TABLE_FECFRAME_NORMAL_C1_3;   end if;
+    if frame_type = fecframe_normal  and code_rate = C2_5  then return LDPC_TABLE_FECFRAME_NORMAL_C2_5;   end if;
+    if frame_type = fecframe_normal  and code_rate = C3_5  then return LDPC_TABLE_FECFRAME_NORMAL_C3_5;   end if;
+    if frame_type = fecframe_normal  and code_rate = C2_3  then return LDPC_TABLE_FECFRAME_NORMAL_C2_3;   end if;
+    if frame_type = fecframe_normal  and code_rate = C3_4  then return LDPC_TABLE_FECFRAME_NORMAL_C3_4;   end if;
+    if frame_type = fecframe_normal  and code_rate = C4_5  then return LDPC_TABLE_FECFRAME_NORMAL_C4_5;   end if;
+    if frame_type = fecframe_normal  and code_rate = C5_6  then return LDPC_TABLE_FECFRAME_NORMAL_C5_6;   end if;
+  end function;
 
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C1_4    then return 135;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C1_3    then return 120;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C2_5    then return 108;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C1_2    then return 90;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C3_5    then return 72;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C2_3    then return 60;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C3_4    then return 45;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C4_5    then return 36;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C5_6    then return 30;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C8_9    then return 20;
-    elsif frame_type = FECFRAME_NORMAL and code_rate = C9_10   then return 18;
-    -- elsif frame_type = FECFRAME_NORMAL and code_rate = not_set then return 0;
-    end if;
-
-    return 0;
-
-  end;
-
-  impure function get_ldpc_q_rom return ldpc_q_array_t is
-    constant ROM_LENGTH : integer := 2**(CODE_RATE_WIDTH + FRAME_TYPE_WIDTH);
-    variable result     : ldpc_q_array_t(ROM_LENGTH - 1 downto 0);
-    variable addr       : natural := 0;
-    variable code_rate  : code_rate_t;
-    variable frame_type : frame_type_t;
+  function get_q (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t) return integer is
+    variable result     : natural;
   begin
+    if frame_type = fecframe_normal  and code_rate = C1_4  then result := 135; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_3  then result := 120; end if;
+    if frame_type = fecframe_normal  and code_rate = C2_5  then result := 108; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_2  then result := 90;  end if;
+    if frame_type = fecframe_normal  and code_rate = C3_5  then result := 72;  end if;
+    if frame_type = fecframe_normal  and code_rate = C2_3  then result := 60;  end if;
+    if frame_type = fecframe_normal  and code_rate = C3_4  then result := 45;  end if;
+    if frame_type = fecframe_normal  and code_rate = C4_5  then result := 36;  end if;
+    if frame_type = fecframe_normal  and code_rate = C5_6  then result := 30;  end if;
+    if frame_type = fecframe_normal  and code_rate = C8_9  then result := 20;  end if;
+    if frame_type = fecframe_normal  and code_rate = C9_10 then result := 18;  end if;
 
-    for frame_type_index in frame_type_t'pos(frame_type_t'left) to frame_type_t'pos(frame_type_t'right) loop
-      for code_rate_index in code_rate_t'pos(code_rate_t'left) to code_rate_t'pos(code_rate_t'right) loop
-        code_rate := code_rate_t'val(code_rate_index);
-        frame_type := frame_type_t'val(frame_type_index);
-
-        addr := to_integer(unsigned(std_logic_vector'(encode(frame_type) & encode(code_rate))));
-        result(addr) := to_unsigned(get_ldpc_q(frame_type, code_rate), LDPC_Q_WIDTH);
-
-      end loop;
-    end loop;
+    if frame_type = fecframe_short  and code_rate = C1_4   then result := 36;   end if;
+    if frame_type = fecframe_short  and code_rate = C1_3   then result := 30;   end if;
+    if frame_type = fecframe_short  and code_rate = C2_5   then result := 27;   end if;
+    if frame_type = fecframe_short  and code_rate = C1_2   then result := 25;   end if;
+    if frame_type = fecframe_short  and code_rate = C3_5   then result := 18;   end if;
+    if frame_type = fecframe_short  and code_rate = C2_3   then result := 15;   end if;
+    if frame_type = fecframe_short  and code_rate = C3_4   then result := 12;   end if;
+    if frame_type = fecframe_short  and code_rate = C4_5   then result := 10;   end if;
+    if frame_type = fecframe_short  and code_rate = C5_6   then result := 8;    end if;
+    if frame_type = fecframe_short  and code_rate = C8_9   then result := 5;    end if;
 
     return result;
+  end function;
 
-  end;
+  function get_ldpc_code_length (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t) return natural is
+    variable result     : natural;
+  begin
+    if frame_type = fecframe_normal  and code_rate = C1_4  then result := 16_200; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_3  then result := 21_600; end if;
+    if frame_type = fecframe_normal  and code_rate = C2_5  then result := 25_920; end if;
+    if frame_type = fecframe_normal  and code_rate = C1_2  then result := 32_400; end if;
+    if frame_type = fecframe_normal  and code_rate = C3_5  then result := 38_880; end if;
+    if frame_type = fecframe_normal  and code_rate = C2_3  then result := 43_200; end if;
+    if frame_type = fecframe_normal  and code_rate = C3_4  then result := 48_600; end if;
+    if frame_type = fecframe_normal  and code_rate = C4_5  then result := 51_840; end if;
+    if frame_type = fecframe_normal  and code_rate = C5_6  then result := 54_000; end if;
+    if frame_type = fecframe_normal  and code_rate = C8_9  then result := 57_600; end if;
+    if frame_type = fecframe_normal  and code_rate = C9_10 then result := 58_320; end if;
 
-  constant LDPC_Q_ROM : ldpc_q_array_t := get_ldpc_q_rom;
+    if frame_type = fecframe_short  and code_rate = C1_4   then result :=  3_240;  end if;
+    if frame_type = fecframe_short  and code_rate = C1_3   then result :=  5_400;  end if;
+    if frame_type = fecframe_short  and code_rate = C2_5   then result :=  6_480;  end if;
+    if frame_type = fecframe_short  and code_rate = C1_2   then result :=  7_200;  end if;
+    if frame_type = fecframe_short  and code_rate = C3_5   then result :=  9_720;  end if;
+    if frame_type = fecframe_short  and code_rate = C2_3   then result := 10_800;  end if;
+    if frame_type = fecframe_short  and code_rate = C3_4   then result := 11_880;  end if;
+    if frame_type = fecframe_short  and code_rate = C4_5   then result := 12_600;  end if;
+    if frame_type = fecframe_short  and code_rate = C5_6   then result := 13_320;  end if;
+    if frame_type = fecframe_short  and code_rate = C8_9   then result := 14_400;  end if;
 
-  -- impure function ldpc_table_to_rom (
-  --   constant table      : integer_2d_array_t;
-  --   constant data_width : natural
-  -- ) return std_logic_vector_2d_t is
-  --   constant table_depth : natural := table'length;
+    if frame_type = fecframe_normal then
+      return FECFRAME_NORMAL_BIT_LENGHT - result;
+    end if;
 
-  --   function get_number_of_entries return integer_array_t is
-  --     variable items : integer_array_t(table_depth - 1 downto 0);
-  --   begin
-  --     for i in 0 to table_depth - 1 loop
-  --       items(i) := table(i)(0);
-  --     end loop;
-  --     return items;
-  --   end;
+    return FECFRAME_SHORT_BIT_LENGTH - result;
 
-  --   constant entry_num       : integer_array_t := get_number_of_entries;
-  --   constant rom_depth       : natural := sum(entry_num);
-  --   variable result          : std_logic_vector_2d_t(rom_depth - 1 downto 0)(data_width - 1 downto 0);
+  end function;
 
-  --   constant addr_width      : natural := data_width - 1;
+  function get_ldpc_table (
+    constant frame_type : in frame_type_t;
+    constant code_rate  : in code_rate_t)
+  return ldpc_table_t is
+  begin
+    return (data   => get_table(frame_type, code_rate),
+            q      => get_q(frame_type, code_rate),
+            length => get_ldpc_code_length(frame_type, code_rate));
+  end function;
 
-  --   variable addr            : natural;
-  --   variable increment       : std_logic := '0';
-
-  --   variable rom_addr        : natural := 0;
-  --   variable rom_data        : std_logic_vector(data_width - 1 downto 0);
-  --   variable columns         : natural;
-  -- begin
-
-  --   -- report cr & "entry_num=" & to_string(sum(entry_num)) & ", " & to_string(table_depth)
-  --   -- severity error;
-
-  --   for row in 0 to table_depth - 1 loop
-  --     columns := entry_num(row);
-
-  --     for column in 1 to columns loop
-  --       addr      := table(row)(column);
-
-  --       if column = columns then
-  --         increment := '1';
-  --       else
-  --         increment := '0';
-  --       end if;
-
-  --       -- report sformat("row %d/%d, column %d/%d => %d, %s", fo(row), fo(table_depth - 1), fo(column), fo(columns), fo(rom_addr), fo(increment));
-
-  --       -- Make sure addr_width is enough to represent every address
-  --       assert to_unsigned(addr, addr_width) = addr
-  --         report "DATA_WIDTH of " & to_string(data_width) & " leaves only " & to_string(addr_width) & " bits for address, which  is too small to represent " & to_string(addr)
-  --         severity Failure;
-
-  --       rom_data := increment & std_logic_vector(to_unsigned(addr, addr_width));
-
-  --       result(rom_addr) := rom_data;
-  --       rom_addr         := rom_addr + 1;
-  --     end loop;
-  --   end loop;
-    
-  --   return result;
-  -- end;
 
 end package body;

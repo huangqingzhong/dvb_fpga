@@ -27,12 +27,15 @@ import logging
 import math
 import os.path as p
 import sys
+from glob import glob
 from os import makedirs
 
 from tabulate import tabulate
 
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 _logger = logging.getLogger(__name__)
+
+ROOT = p.abspath(p.dirname(__file__))
 
 HEADER = """\
 --
@@ -82,7 +85,7 @@ class LdpcTable:
         for line in (x.strip() for x in open(self._path).readlines()):
             if not line:
                 continue
-            yield tuple(int(x) for x in line.split("\t"))
+            yield tuple(int(x) for x in line.split(","))
 
     def _getColumnWidths(self):
         max_values = {}
@@ -149,7 +152,7 @@ class LdpcTable:
         columns = len(self._widths)
 
         lines = [
-            f"  -- From {self._path}, table is {depth}x{width} ({depth*width/8.} bytes)",
+            f"  -- From {p.relpath(self._path, ROOT)}, table is {depth}x{width} ({depth*width/8.} bytes)",
             f"  -- Resource estimation: {brams_18k} x 18 kB BRAMs or {brams_36k} x 36 kB BRAMs",
             f"  {self._getWidthArray()}",
             "",
@@ -178,8 +181,6 @@ class LdpcTable:
 
 
 def main():
-    root = p.abspath(p.dirname(__file__))
-
     lines = str(HEADER)
 
     lines += "\n".join(
@@ -194,8 +195,7 @@ def main():
         ]
     )
 
-    paths = sys.argv[1:]
-    paths.sort()
+    paths = sorted(glob(p.join(ROOT, "ldpc", "*.csv")))
 
     rendered_tables = ""
 
@@ -227,7 +227,7 @@ def main():
 
     lines += "\n".join(["", "end package ldpc_tables_pkg;",])
 
-    target_file = p.abspath(p.join(root, "..", "rtl", "ldpc", "ldpc_tables_pkg.vhd"))
+    target_file = p.abspath(p.join(ROOT, "..", "rtl", "ldpc", "ldpc_tables_pkg.vhd"))
     if not p.exists(p.dirname(target_file)):
         makedirs(p.dirname(target_file))
     open(target_file, "w").write(lines)
