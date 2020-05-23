@@ -35,7 +35,7 @@ from enum import Enum
 from multiprocessing import Pool
 from typing import NamedTuple
 
-from vunit import VUnit  # type: ignore
+from vunit import VUnit, VUnitCLI  # type: ignore
 
 _logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class TestDefinition(
         )
 
 
-def _getAllConfigs(
+def _getConfigs(
     code_rates=CodeRate, frame_lengths=FrameLength, constellations=ConstellationType
 ):
 
@@ -157,7 +157,7 @@ def _getAllConfigs(
                 )
 
 
-TEST_CONFIGS = set(_getAllConfigs())
+TEST_CONFIGS = set(_getConfigs())
 
 
 def _runGnuRadio(config):
@@ -295,7 +295,7 @@ def _createLdpcTables():
     Creates the binary LDPC table files if they don't already exist
     """
     path_to_tables = p.join(ROOT, "misc", "ldpc")
-    for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,)):
+    for config in _getConfigs(constellations=(ConstellationType.MOD_8PSK,)):
         csv_table = (
             f"{path_to_tables}/"
             f"ldpc_table_{config.frame_length.name}_{config.code_rate.name}.csv"
@@ -326,6 +326,10 @@ class GhdlPragmaHandler:
     )
 
     def run(self, code, file_name):  # pylint: disable=unused-argument,no-self-use
+        """
+        Removes text between "-- ghdl translate_off" and "-- ghdl translate_on"
+        """
+        # Lazy check to avoid running the regex unnecessarily
         for word in ("ghdl", "translate_on", "translate_off"):
             if word not in code:
                 return code
@@ -341,82 +345,94 @@ def main():
     _generateGnuRadioData()
     _createLdpcTables()
 
-    cli = VUnit.from_argv()
-    cli.add_osvvm()
-    cli.add_com()
-    cli.enable_location_preprocessing()
-    if cli.get_simulator_name() == "ghdl":
-        cli.add_preprocessor(GhdlPragmaHandler())
+    cli = VUnitCLI()
+    cli.parser.add_argument(
+        "--individual-config-runs",
+        "-i",
+        action="store_true",
+        help="Create individual test runs for each configuration. By default, "
+        "all combinations of frame lengths, code rates and modulations are "
+        "tested in the same simulation",
+    )
+    args = cli.parse_args()
 
-    library = cli.add_library("lib")
+    vunit = VUnit.from_args(args=args)
+    vunit.add_osvvm()
+    vunit.add_com()
+    vunit.enable_location_preprocessing()
+    if vunit.get_simulator_name() == "ghdl":
+        vunit.add_preprocessor(GhdlPragmaHandler())
+
+    library = vunit.add_library("lib")
     library.add_source_files(p.join(ROOT, "rtl", "*.vhd"))
     library.add_source_files(p.join(ROOT, "rtl", "ldpc", "*.vhd"))
     library.add_source_files(p.join(ROOT, "rtl", "bch_generated", "*.vhd"))
     library.add_source_files(p.join(ROOT, "testbench", "*.vhd"))
 
-    cli.add_library("str_format").add_source_files(
+    vunit.add_library("str_format").add_source_files(
         p.join(ROOT, "third_party", "hdl_string_format", "src", "*.vhd")
     )
 
-    cli.add_library("fpga_cores").add_source_files(
+    vunit.add_library("fpga_cores").add_source_files(
         p.join(ROOT, "third_party", "fpga_cores", "src", "*.vhd")
     )
-    cli.add_library("fpga_cores_sim").add_source_files(
+    vunit.add_library("fpga_cores_sim").add_source_files(
         p.join(ROOT, "third_party", "fpga_cores", "sim", "*.vhd")
     )
 
-    addAllConfigsTest(
-        entity=cli.library("lib").entity("axi_bch_encoder_tb"),
-        configs=TEST_CONFIGS,
-        input_file_basename="bch_encoder_input.bin",
-        reference_file_basename="ldpc_encoder_input.bin",
-    )
+    if args.individual_config_runs:
+        # BCH encoding doesn't depend on the constellation type, choose any
+        for config in _getConfigs(constellations=(ConstellationType.MOD_8PSK,)):
+            vunit.library("lib").entity("axi_bch_encoder_tb").add_config(
+                name=config.name,
+                generics=dict(
+                    test_cfg=config.getTestConfigString(
+                        input_file_path="bch_encoder_input.bin",
+                        reference_file_path="ldpc_encoder_input.bin",
+                    ),
+                    NUMBER_OF_TEST_FRAMES=8,
+                ),
+            )
 
-    addAllConfigsTest(
-        entity=cli.library("lib").entity("axi_baseband_scrambler_tb"),
-        configs=TEST_CONFIGS,
-        input_file_basename="bb_scrambler_input.bin",
-        reference_file_basename="bch_encoder_input.bin",
-    )
+        # Only generate configs for 8 PSK since LDPC does not depend on this
+        # parameter
+        for config in _getConfigs(constellations=(ConstellationType.MOD_8PSK,),):
+            vunit.library("lib").entity("axi_ldpc_encoder_tb").add_config(
+                name=config.name,
+                generics=dict(
+                    test_cfg=config.getTestConfigString(
+                        input_file_path="ldpc_encoder_input.bin",
+                        reference_file_path="bit_interleaver_input.bin",
+                    ),
+                    NUMBER_OF_TEST_FRAMES=2,
+                ),
+            )
+    else:
+        addAllConfigsTest(
+            entity=vunit.library("lib").entity("axi_bch_encoder_tb"),
+            configs=TEST_CONFIGS,
+            input_file_basename="bch_encoder_input.bin",
+            reference_file_basename="ldpc_encoder_input.bin",
+        )
 
-    # Uncomment this to test configs individually
-    #  # BCH encoding doesn't depend on the constellation type, choose any
-    #  for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,)):
-    #      cli.library("lib").entity("axi_bch_encoder_tb").add_config(
-    #          name=config.name,
-    #          generics=dict(
-    #              test_cfg=config.getTestConfigString(
-    #                  input_file_path="bch_encoder_input.bin",
-    #                  reference_file_path="ldpc_encoder_input.bin",
-    #              ),
-    #              NUMBER_OF_TEST_FRAMES=8,
-    #          ),
-    #      )
+        addAllConfigsTest(
+            entity=vunit.library("lib").entity("axi_baseband_scrambler_tb"),
+            configs=TEST_CONFIGS,
+            input_file_basename="bb_scrambler_input.bin",
+            reference_file_basename="bch_encoder_input.bin",
+        )
 
-    addAllConfigsTest(
-        entity=cli.library("lib").entity("axi_ldpc_encoder_tb"),
-        configs=_getAllConfigs(constellations=(ConstellationType.MOD_8PSK,),),
-        input_file_basename="ldpc_encoder_input.bin",
-        reference_file_basename="bit_interleaver_input.bin",
-    )
+        addAllConfigsTest(
+            entity=vunit.library("lib").entity("axi_ldpc_encoder_tb"),
+            configs=_getConfigs(constellations=(ConstellationType.MOD_8PSK,),),
+            input_file_basename="ldpc_encoder_input.bin",
+            reference_file_basename="bit_interleaver_input.bin",
+        )
 
-    #  # Only generate configs for 8 PSK since LDPC does not depend on this
-    #  # parameter
-    #  for config in _getAllConfigs(constellations=(ConstellationType.MOD_8PSK,),):
-    #      cli.library("lib").entity("axi_ldpc_encoder_tb").add_config(
-    #          name=config.name,
-    #          generics=dict(
-    #              test_cfg=config.getTestConfigString(
-    #                  input_file_path="ldpc_encoder_input.bin",
-    #                  reference_file_path="bit_interleaver_input.bin",
-    #              ),
-    #              NUMBER_OF_TEST_FRAMES=2,
-    #          ),
-    #      )
-
+    # Generate bit interleaver tests
     for data_width in (1, 8):
         all_configs = []
-        for config in _getAllConfigs():
+        for config in _getConfigs():
             all_configs += [
                 config.getTestConfigString(
                     input_file_path="bit_interleaver_input.bin",
@@ -424,41 +440,43 @@ def main():
                 )
             ]
 
-            # Uncomment this to test configs individually
-            #  cli.library("lib").entity("axi_bit_interleaver_tb").add_config(
-            #      name=f"data_width={data_width},{config.name}",
-            #      generics=dict(
-            #          DATA_WIDTH=data_width,
-            #          test_cfg=config.getTestConfigString(
-            #              input_file_path="bit_interleaver_input.bin",
-            #              reference_file_path="bit_interleaver_output.bin",
-            #          ),
-            #          NUMBER_OF_TEST_FRAMES=8,
-            #      ),
-            #  )
+            if args.individual_config_runs:
+                vunit.library("lib").entity("axi_bit_interleaver_tb").add_config(
+                    name=f"data_width={data_width},{config.name}",
+                    generics=dict(
+                        DATA_WIDTH=data_width,
+                        test_cfg=config.getTestConfigString(
+                            input_file_path="bit_interleaver_input.bin",
+                            reference_file_path="bit_interleaver_output.bin",
+                        ),
+                        NUMBER_OF_TEST_FRAMES=8,
+                    ),
+                )
 
-        cli.library("lib").entity("axi_bit_interleaver_tb").add_config(
-            name=f"data_width={data_width},all_parameters",
-            generics=dict(
-                DATA_WIDTH=data_width,
-                test_cfg="|".join(all_configs),
-                NUMBER_OF_TEST_FRAMES=2,
-            ),
-        )
+        if not args.individual_config_runs:
+            vunit.library("lib").entity("axi_bit_interleaver_tb").add_config(
+                name=f"data_width={data_width},all_parameters",
+                generics=dict(
+                    DATA_WIDTH=data_width,
+                    test_cfg="|".join(all_configs),
+                    NUMBER_OF_TEST_FRAMES=2,
+                ),
+            )
 
-    cli.set_compile_option("modelsim.vcom_flags", ["-explicit"])
+    vunit.set_compile_option("modelsim.vcom_flags", ["-explicit"])
 
     # Not all options are supported by all GHDL backends
-    #  cli.set_compile_option("ghdl.flags", ["-frelaxed-rules"])
-    cli.set_sim_option("ghdl.elab_flags", ["-frelaxed-rules"])
-    cli.set_compile_option("ghdl.flags", ["-frelaxed-rules", "-O2", "-g"])
+    vunit.set_sim_option("ghdl.elab_flags", ["-frelaxed-rules"])
+    vunit.set_compile_option("ghdl.a_flags", ["-frelaxed-rules", "-O2", "-g"])
 
     # Make components not bound (error 3473) an error
-    cli.set_sim_option("modelsim.vsim_flags", ["-error", "3473", '-voptargs="+acc=n"'])
+    vunit.set_sim_option(
+        "modelsim.vsim_flags", ["-error", "3473", '-voptargs="+acc=n"']
+    )
 
-    cli.set_sim_option("disable_ieee_warnings", True)
-    cli.set_sim_option("modelsim.init_file.gui", p.join(ROOT, "wave.do"))
-    cli.main()
+    vunit.set_sim_option("disable_ieee_warnings", True)
+    vunit.set_sim_option("modelsim.init_file.gui", p.join(ROOT, "wave.do"))
+    vunit.main()
 
 
 def addAllConfigsTest(entity, configs, input_file_basename, reference_file_basename):
