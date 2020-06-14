@@ -334,6 +334,8 @@ class GhdlPragmaHandler:
             if word not in code:
                 return code
 
+        # Would be better to comment out instead of removing to keep line
+        # numbers
         result = self._PRAGMA.sub(r"", code)
 
         return result
@@ -404,7 +406,7 @@ def main():
                         input_file_path="ldpc_encoder_input.bin",
                         reference_file_path="bit_interleaver_input.bin",
                     ),
-                    NUMBER_OF_TEST_FRAMES=2,
+                    NUMBER_OF_TEST_FRAMES=3,
                 ),
             )
     else:

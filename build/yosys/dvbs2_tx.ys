@@ -1,6 +1,6 @@
 ghdl --std=08                                                                 \
-  --work=str_format third_party/hdl_string_format/src/str_format_pkg.vhd      \
-  --work=fpga_cores third_party/fpga_cores/src/synchronizer.vhd               \
+  --work=fpga_cores third_party/fpga_cores/src/common_pkg.vhd                 \
+                    third_party/fpga_cores/src/synchronizer.vhd               \
                     third_party/fpga_cores/src/axi_pkg.vhd                    \
                     third_party/fpga_cores/src/sr_delay.vhd                   \
                     third_party/fpga_cores/src/skidbuffer.vhd                 \
@@ -10,7 +10,6 @@ ghdl --std=08                                                                 \
                     third_party/fpga_cores/src/edge_detector.vhd              \
                     third_party/fpga_cores/src/pulse_sync.vhd                 \
                     third_party/fpga_cores/src/axi_stream_delay.vhd           \
-                    third_party/fpga_cores/src/common_pkg.vhd                 \
                     third_party/fpga_cores/src/sync_fifo.vhd                  \
                     third_party/fpga_cores/src/axi_stream_master_adapter.vhd  \
                     third_party/fpga_cores/src/axi_stream_duplicate.vhd       \

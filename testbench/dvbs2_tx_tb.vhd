@@ -35,6 +35,7 @@ library str_format;
 use str_format.str_format_pkg.all;
 
 library fpga_cores;
+use fpga_cores.axi_pkg.all;
 use fpga_cores.common_pkg.all;
 
 library fpga_cores_sim;
@@ -47,9 +48,8 @@ use work.dvb_sim_utils_pkg.all;
 entity dvbs2_tx_tb is
   generic (
     RUNNER_CFG            : string;
-    -- TEST_CFG              : string := "";
-    DATA_WIDTH            : integer := 8;
-    NUMBER_OF_TEST_FRAMES : integer := 8);
+    TEST_CFG              : string := "";
+    NUMBER_OF_TEST_FRAMES : integer := 1);
 end dvbs2_tx_tb;
 
 architecture dvbs2_tx_tb of dvbs2_tx_tb is
@@ -57,12 +57,14 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
   ---------------
   -- Constants --
   ---------------
-  -- constant configs               : config_array_t := get_test_cfg(TEST_CFG);
+  constant configs           : config_array_t := get_test_cfg(TEST_CFG);
+  constant DATA_WIDTH        : integer := 8;
 
-  constant FILE_READER_NAME      : string := "file_reader";
-  constant FILE_CHECKER_NAME     : string := "file_checker";
-  constant CLK_PERIOD            : time := 5 ns;
-  constant ERROR_CNT_WIDTH       : integer := 8;
+  constant LDPC_READER_NAME  : string  := "ldpc_table";
+  constant FILE_READER_NAME  : string  := "file_reader";
+  constant FILE_CHECKER_NAME : string  := "file_checker";
+  constant CLK_PERIOD        : time := 5 ns;
+  constant ERROR_CNT_WIDTH   : integer := 8;
 
   function get_checker_data_ratio ( constant constellation : in constellation_t)
   return string is
@@ -92,29 +94,26 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
   signal cfg_frame_type     : frame_type_t;
   signal cfg_code_rate      : code_rate_t;
 
-  signal tvalid_probability : real range 0.0 to 1.0 := 1.0;
+  signal data_probability   : real range 0.0 to 1.0 := 1.0;
+  signal table_probability  : real range 0.0 to 1.0 := 1.0;
   signal tready_probability : real range 0.0 to 1.0 := 1.0;
 
   -- AXI input
-  signal m_tready           : std_logic;
-  signal m_tvalid           : std_logic;
-  signal m_tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal m_tlast            : std_logic;
+  signal axi_master         : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
   signal m_data_valid       : boolean;
 
   -- AXI LDPC table input
-  signal m_ldpc_tready     : std_logic;
-  signal m_ldpc_tvalid     : std_logic;
-  signal m_ldpc_offset     : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-  signal m_ldpc_next       : std_logic;
-  signal m_ldpc_tuser      : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-  signal m_ldpc_tlast      : std_logic;
+  signal axi_ldpc           : axi_stream_data_bus_t(tdata(2*numbits(max(DVB_N_LDPC)) + 8 - 1 downto 0));
+  -- signal axi_ldpc.tready     : std_logic;
+  -- signal axi_ldpc.tready     : std_logic;
+  -- signal axi_ldpc.tdata     : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+  -- signal axi_ldpc.tdata       : std_logic;
+  -- signal axi_ldpc.tdata      : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
+  -- signal axi_ldpc.tlast      : std_logic;
+
 
   -- AXI output
-  signal s_tvalid           : std_logic;
-  signal s_tdata            : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal s_tlast            : std_logic;
-  signal s_tready           : std_logic;
+  signal axi_slave          : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
   signal s_data_valid       : boolean;
 
   signal expected_tdata     : std_logic_vector(DATA_WIDTH - 1 downto 0);
@@ -140,24 +139,42 @@ begin
       cfg_code_rate     => encode(cfg_code_rate),
 
       -- AXI input
-      s_tvalid          => m_tvalid,
-      s_tdata           => m_tdata,
-      s_tlast           => m_tlast,
-      s_tready          => m_tready,
+      s_tvalid          => axi_master.tvalid,
+      s_tdata           => axi_master.tdata,
+      s_tlast           => axi_master.tlast,
+      s_tready          => axi_master.tready,
 
-      s_ldpc_tready     => m_ldpc_tready,
-      s_ldpc_tvalid     => m_ldpc_tvalid,
-      s_ldpc_offset     => m_ldpc_offset,
-      s_ldpc_next       => m_ldpc_next,
-      s_ldpc_tuser      => m_ldpc_tuser,
-      s_ldpc_tlast      => m_ldpc_tlast,
+      s_ldpc_offset     => axi_ldpc.tdata(numbits(max(DVB_N_LDPC)) - 1 downto 0),
+      s_ldpc_tuser      => axi_ldpc.tdata(2*numbits(max(DVB_N_LDPC)) - 1 downto numbits(max(DVB_N_LDPC)) ),
+      s_ldpc_next       => axi_ldpc.tdata(2*numbits(max(DVB_N_LDPC))),
+      s_ldpc_tvalid     => axi_ldpc.tvalid,
+      s_ldpc_tlast      => axi_ldpc.tlast,
+      s_ldpc_tready     => axi_ldpc.tready,
 
       -- AXI output
-      m_tready          => s_tready,
-      m_tvalid          => s_tvalid,
-      m_tlast           => s_tlast,
-      m_tdata           => s_tdata);
+      m_tready          => axi_slave.tready,
+      m_tvalid          => axi_slave.tvalid,
+      m_tlast           => axi_slave.tlast,
+      m_tdata           => axi_slave.tdata);
 
+
+  -- AXI file read
+  axi_table_u : entity fpga_cores_sim.axi_file_reader
+    generic map (
+      READER_NAME => LDPC_READER_NAME,
+      DATA_WIDTH  => axi_ldpc.tdata'length)
+    port map (
+      -- Usual ports
+      clk                => clk,
+      rst                => rst,
+      -- Config and status
+      completed          => open,
+      tvalid_probability => table_probability,
+      -- AXI stream output
+      m_tready           => axi_ldpc.tready,
+      m_tdata            => axi_ldpc.tdata,
+      m_tvalid           => axi_ldpc.tvalid,
+      m_tlast            => axi_ldpc.tlast);
 
   -- AXI file read
   axi_file_reader_u : entity fpga_cores_sim.axi_file_reader
@@ -170,19 +187,19 @@ begin
       rst                => rst,
       -- Config and status
       completed          => open,
-      tvalid_probability => tvalid_probability,
+      tvalid_probability => data_probability,
 
       -- Data output
-      m_tready           => m_tready,
-      m_tdata            => m_tdata,
-      m_tvalid           => m_tvalid,
-      m_tlast            => m_tlast);
+      m_tready           => axi_master.tready,
+      m_tdata            => axi_master.tdata,
+      m_tvalid           => axi_master.tvalid,
+      m_tlast            => axi_master.tlast);
 
   axi_file_compare_u : entity fpga_cores_sim.axi_file_compare
     generic map (
       READER_NAME     => FILE_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
-      REPORT_SEVERITY => Warning,
+      REPORT_SEVERITY => Error,
       DATA_WIDTH      => DATA_WIDTH)
     port map (
       -- Usual ports
@@ -197,10 +214,10 @@ begin
       expected_tdata     => expected_tdata,
       expected_tlast     => expected_tlast,
       -- Data input
-      s_tready           => s_tready,
-      s_tdata            => s_tdata,
-      s_tvalid           => s_tvalid,
-      s_tlast            => s_tlast);
+      s_tready           => axi_slave.tready,
+      s_tdata            => axi_slave.tdata,
+      s_tvalid           => axi_slave.tvalid,
+      s_tlast            => axi_slave.tlast);
 
   ------------------------------
   -- Asynchronous assignments --
@@ -209,8 +226,8 @@ begin
 
   test_runner_watchdog(runner, 3 ms);
 
-  m_data_valid <= m_tvalid = '1' and m_tready = '1';
-  s_data_valid <= s_tvalid = '1' and s_tready = '1';
+  m_data_valid <= axi_master.tvalid = '1' and axi_master.tready = '1';
+  s_data_valid <= axi_slave.tvalid = '1' and axi_slave.tready = '1';
 
   ---------------
   -- Processes --
@@ -288,13 +305,13 @@ begin
       rst <= '0';
       walk(4);
 
-      tvalid_probability <= 1.0;
+      data_probability <= 1.0;
       tready_probability <= 1.0;
 
       -- set_timeout(runner, configs'length * NUMBER_OF_TEST_FRAMES * 4 ms / DATA_WIDTH);
 
       if run("back_to_back") then
-        tvalid_probability <= 1.0;
+        data_probability <= 1.0;
         tready_probability <= 1.0;
 
         -- for i in configs'range loop
@@ -338,12 +355,12 @@ begin
     cfg_constellation <= pop(cfg_msg);
     cfg_frame_type    <= pop(cfg_msg);
     cfg_code_rate     <= pop(cfg_msg);
-    wait until m_data_valid and m_tlast = '0' and rising_edge(clk);
+    wait until m_data_valid and axi_master.tlast = '0' and rising_edge(clk);
     cfg_constellation <= not_set;
     cfg_frame_type    <= not_set;
     cfg_code_rate     <= not_set;
 
-    wait until m_data_valid and m_tlast = '1';
+    wait until m_data_valid and axi_master.tlast = '1';
 
     -- When this is received, the file reader has finished reading the file
     wait_file_read(net, file_reader);

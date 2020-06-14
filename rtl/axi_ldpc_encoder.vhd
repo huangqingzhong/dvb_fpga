@@ -419,7 +419,7 @@ begin
       ldpc_table_ram_ready <= '0';
       s_ldpc_next_sampled  <= '0';
 
-      -- Set the last word according to the pipeline_context_ram ready 
+      -- Set the last word according to the pipeline_context_ram ready
       if frame_out_last and frame_ram_en_reg0 then
         encoded_wr_last <= '1';
         encoded_wr_mask <= frame_out_mask and (frame_out_mask'range => frame_ram_en_reg0);
@@ -669,7 +669,7 @@ begin
         forward_encoded_data <= '0';
       end if;
 
-      -- AXI input data that was converted to 1 bit needs to be synchronized properly with 
+      -- AXI input data that was converted to 1 bit needs to be synchronized properly with
       axi_bit_tdata_reg1   <= axi_bit_tdata_reg0;
       dbg_axi_bit_cnt_reg1 <= dbg_axi_bit_cnt_reg0;
 

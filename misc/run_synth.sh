@@ -40,8 +40,9 @@ adduser --disabled-password \
   --home /home/$USER $USER > /dev/null 2>&1
 
 # Run test with GHDL
-su -l $USER -c \"                          \
-  cd /project                           && \
+su -l $USER -c \"                                            \
+  cd /project                                             && \
+  echo \\\"$ yosys -m ghdl build/yosys/dvbs2_tx.ys $*\\\" &&
   yosys -m ghdl build/yosys/dvbs2_tx.ys $*\"
 "
 
