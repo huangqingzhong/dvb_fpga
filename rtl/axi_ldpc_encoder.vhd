@@ -123,8 +123,7 @@ architecture axi_ldpc_encoder of axi_ldpc_encoder is
   signal ldpc_table_ram_ready    : std_logic := '0';
   signal ldpc_append_ram_ready   : std_logic := '0';
   signal frame_ram_en            : std_logic;
-  signal frame_ram_valid_p0      : std_logic;
-  signal frame_ram_valid_p1      : std_logic;
+  signal frame_ram_en_reg0       : std_logic;
 
   signal frame_addr_in           : unsigned(FRAME_RAM_ADDR_WIDTH - 1 downto 0);
 
@@ -276,7 +275,7 @@ begin
       en_in       => frame_ram_en,
       addr_in     => std_logic_vector(frame_addr_in),
       -- Data checkout output
-      en_out      => frame_ram_valid_p0,
+      en_out      => frame_ram_en_reg0,
       addr_out    => frame_addr_out,
       context_out => frame_ram_rddata,
       -- Updated data input
@@ -347,8 +346,7 @@ begin
     port map (
       -- Usual ports
       clk     => clk,
-      clken   => '1', --frame_ram_valid_p0, -- Frame address reset will only be "acknowledged" when
-                                  -- frame_ram_valid_p0 is high
+      clken   => '1',
       --
       din     => stop_input_streams_p0,
       -- Edges detected
@@ -422,25 +420,23 @@ begin
       s_ldpc_next_sampled  <= '0';
 
       -- Set the last word according to the pipeline_context_ram ready 
-      if frame_out_last and frame_ram_valid_p0 then
+      if frame_out_last and frame_ram_en_reg0 then
         encoded_wr_last <= '1';
-        encoded_wr_mask <= frame_out_mask and frame_ram_valid_p0;
-      elsif encoded_wr_en = '1' then --and encoded_wr_full = '0' then
+        encoded_wr_mask <= frame_out_mask and frame_ram_en_reg0;
+      elsif encoded_wr_en = '1' then
         encoded_wr_last <= '0';
       end if;
 
-      -- Synchronize
+      -- Synchronize bit index to be used in the next stage
       frame_bit_index      <= table_offset(numbits(FRAME_RAM_DATA_WIDTH) - 1 downto 0);
 
       -- Sample frame_in_{last,mask} whenever data from the pipeline_context_ram is valid
-      if frame_ram_valid_p0 = '1' then
+      if frame_ram_en_reg0 = '1' then
         frame_out_last     <= frame_in_last;
         frame_out_mask     <= frame_in_mask;
       end if;
 
-      frame_out_last_reg    <= frame_out_last and frame_ram_valid_p0;
-
-      frame_ram_valid_p1    <= frame_ram_valid_p0;
+      frame_out_last_reg <= frame_out_last and frame_ram_en_reg0;
 
       if wait_frame_completion = '1' then
         frame_out_last <= '0';
@@ -471,7 +467,7 @@ begin
         -- When extracting frame data, we need to complete the given frame. Since the
         -- frame size is not always an integer multiple of the frame length, we also need
         -- to check if data bit cnt has wrapped (MSB is 1).
-        if frame_addr_rst_p0 = '1' then --and frame_ram_valid_p0 = '1' then
+        if frame_addr_rst_p0 = '1' then
           frame_addr_in        <= (others => '0');
         elsif frame_out_last = '0' then
           frame_addr_in        <= frame_addr_in + 1;
@@ -537,7 +533,7 @@ begin
         wait_frame_completion <= '0';
       end if;
 
-      if frame_out_last = '1' and frame_ram_valid_p0 = '1' then
+      if frame_out_last = '1' and frame_ram_en_reg0 = '1' then
         stop_input_streams_p0 <= '0';
       end if;
 
@@ -625,7 +621,7 @@ begin
 
       -- Handle data coming out of the frame RAM, either by using the input data of by
       -- calculating the actual final XOR'ed value
-      if frame_ram_valid_p0 = '1' then
+      if frame_ram_en_reg0 = '1' then
         -- if writing_encoded_data = '0' then --and frame_addr_rst_p1 = '0' then
         if clearing_frame_ram_p0 = '0' then
           frame_ram_wrdata(frame_bit_index_i) <= axi_bit_tdata_reg1

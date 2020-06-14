@@ -75,7 +75,7 @@ architecture axi_ldpc_encoder_tb of axi_ldpc_encoder_tb is
   constant CLK_PERIOD        : time    := 5 ns;
   constant ERROR_CNT_WIDTH   : integer := 8;
 
-  constant DBG_CHECK_FRAME_RAM_WRITES : boolean := True;
+  constant DBG_CHECK_FRAME_RAM_WRITES : boolean := False;
 
   -------------
   -- Signals --
@@ -150,7 +150,7 @@ begin
       m_tlast           => axi_slave.tlast,
       m_tdata           => axi_slave.tdata);
 
-  -- AXI file read
+  -- Read LDPC tables
   axi_table_u : entity fpga_cores_sim.axi_file_reader
     generic map (
       READER_NAME => LDPC_READER_NAME,
@@ -495,7 +495,7 @@ begin
     type ram_t is array (0 to 4095) of std_logic_vector(15 downto 0);
     signal dut_ram : ram_t;
 
-    signal encoded_wr_en : std_logic;
+    signal dut_extracting_codes_from_ram : std_logic;
 
   begin
 
@@ -691,11 +691,12 @@ begin
 
         accumulate_ldpc(table);
 
-        wait until rising_edge(clk) and encoded_wr_en = '1';
-        wait until rising_edge(clk);
+        wait until rising_edge(clk) and dut_extracting_codes_from_ram = '1';
+        wait until falling_edge(clk);
+        wait until falling_edge(clk);
         wait until falling_edge(clk);
 
-        compare_ram;
+        -- compare_ram;
 
         mem := post_xor(mem);
 
@@ -722,7 +723,7 @@ begin
       wait until rst = '0';
 
       init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_ram_u/ram_u/ram", "/axi_ldpc_encoder_tb/whitebox_monitor/dut_ram", 0);
-      init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_addr_rst_p1", "/axi_ldpc_encoder_tb/whitebox_monitor/encoded_wr_en", 0);
+      init_signal_spy("/axi_ldpc_encoder_tb/dut/frame_addr_rst_p0", "/axi_ldpc_encoder_tb/whitebox_monitor/dut_extracting_codes_from_ram", 0);
 
       while True loop
         receive(net, self, msg);
