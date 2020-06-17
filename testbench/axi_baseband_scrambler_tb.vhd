@@ -192,15 +192,15 @@ begin
     procedure run_test (
       constant config           : config_t;
       constant number_of_frames : in positive) is
+      constant data_path        : string := strip(config.base_path, chars => (1 to 1 => nul));
     begin
 
       info("Running test with:");
-      info(" - input     : " & config.files.input);
-      info(" - reference : " & config.files.reference);
+      info(" - data path      : " & data_path);
 
       for i in 0 to number_of_frames - 1 loop
-        read_file(net, file_reader, config.files.input, "1:8");
-        read_file(net, file_checker, config.files.reference, "1:8");
+        read_file(net, file_reader, data_path & "/bb_scrambler_input.bin", "1:8");
+        read_file(net, file_checker, data_path & "/bch_encoder_input.bin", "1:8");
       end loop;
 
     end procedure run_test;

@@ -104,23 +104,16 @@ class TestDefinition(
         super(TestDefinition, self).__init__()
         self.timestamp = p.join(self.test_files_path, "timestamp")
 
-    def getTestConfigString(self, input_file_path, reference_file_path):
+    def getTestConfigString(self):
         """
         Returns the value for the 'test_cfg' string of the testbench
         """
-        for path in (
-            p.join(self.test_files_path, input_file_path),
-            p.join(self.test_files_path, reference_file_path),
-        ):
-            assert p.exists(path), f"No such file '{path}'"
-
         return ",".join(
             [
                 self.constellation.name,
                 self.frame_length.name,
                 self.code_rate.name,
-                p.join(self.test_files_path, input_file_path),
-                p.join(self.test_files_path, reference_file_path),
+                self.test_files_path,
             ]
         )
 
@@ -294,16 +287,15 @@ def _createLdpcTables():
     """
     Creates the binary LDPC table files if they don't already exist
     """
-    path_to_tables = p.join(ROOT, "misc", "ldpc")
-    for config in _getConfigs(constellations=(ConstellationType.MOD_8PSK,)):
+    path_to_csv = p.join(ROOT, "misc", "ldpc")
+
+    for config in TEST_CONFIGS:
         csv_table = (
-            f"{path_to_tables}/"
+            f"{path_to_csv}/"
             f"ldpc_table_{config.frame_length.name}_{config.code_rate.name}.csv"
         )
-        bin_table = (
-            f"{path_to_tables}/"
-            f"ldpc_table_{config.frame_length.name}_{config.code_rate.name}.bin"
-        )
+
+        bin_table = p.join(config.test_files_path, "ldpc_table.bin")
 
         if not p.exists(bin_table):
             assert p.exists(csv_table), f"No such file: {repr(csv_table)}"
@@ -388,22 +380,14 @@ def main():
             vunit.library("lib").entity("axi_bch_encoder_tb").add_config(
                 name=config.name,
                 generics=dict(
-                    test_cfg=config.getTestConfigString(
-                        input_file_path="bch_encoder_input.bin",
-                        reference_file_path="ldpc_encoder_input.bin",
-                    ),
-                    NUMBER_OF_TEST_FRAMES=8,
+                    test_cfg=config.getTestConfigString(), NUMBER_OF_TEST_FRAMES=8,
                 ),
             )
 
             vunit.library("lib").entity("dvbs2_tx_tb").add_config(
                 name=config.name,
                 generics=dict(
-                    test_cfg=config.getTestConfigString(
-                        input_file_path="bb_scrambler_input.bin",
-                        reference_file_path="bit_interleaver_output.bin",
-                    ),
-                    NUMBER_OF_TEST_FRAMES=2,
+                    test_cfg=config.getTestConfigString(), NUMBER_OF_TEST_FRAMES=2,
                 ),
             )
 
@@ -413,63 +397,42 @@ def main():
             vunit.library("lib").entity("axi_ldpc_encoder_tb").add_config(
                 name=config.name,
                 generics=dict(
-                    test_cfg=config.getTestConfigString(
-                        input_file_path="ldpc_encoder_input.bin",
-                        reference_file_path="bit_interleaver_input.bin",
-                    ),
-                    NUMBER_OF_TEST_FRAMES=3,
+                    test_cfg=config.getTestConfigString(), NUMBER_OF_TEST_FRAMES=3,
                 ),
             )
     else:
         addAllConfigsTest(
             entity=vunit.library("lib").entity("axi_bch_encoder_tb"),
             configs=TEST_CONFIGS,
-            input_file_basename="bch_encoder_input.bin",
-            reference_file_basename="ldpc_encoder_input.bin",
         )
 
         addAllConfigsTest(
             entity=vunit.library("lib").entity("axi_baseband_scrambler_tb"),
             configs=TEST_CONFIGS,
-            input_file_basename="bb_scrambler_input.bin",
-            reference_file_basename="bch_encoder_input.bin",
         )
 
         addAllConfigsTest(
             entity=vunit.library("lib").entity("axi_ldpc_encoder_tb"),
             configs=_getConfigs(constellations=(ConstellationType.MOD_8PSK,),),
-            input_file_basename="ldpc_encoder_input.bin",
-            reference_file_basename="bit_interleaver_input.bin",
         )
 
         addAllConfigsTest(
             entity=vunit.library("lib").entity("dvbs2_tx_tb"),
-            configs=TEST_CONFIGS,
-            input_file_basename="bb_scrambler_input.bin",
-            reference_file_basename="bit_interleaver_output.bin",
+            configs=tuple(TEST_CONFIGS)[0:2],
         )
-
 
     # Generate bit interleaver tests
     for data_width in (1, 8):
         all_configs = []
         for config in _getConfigs():
-            all_configs += [
-                config.getTestConfigString(
-                    input_file_path="bit_interleaver_input.bin",
-                    reference_file_path="bit_interleaver_output.bin",
-                )
-            ]
+            all_configs += [config.getTestConfigString()]
 
             if args.individual_config_runs:
                 vunit.library("lib").entity("axi_bit_interleaver_tb").add_config(
                     name=f"data_width={data_width},{config.name}",
                     generics=dict(
                         DATA_WIDTH=data_width,
-                        test_cfg=config.getTestConfigString(
-                            input_file_path="bit_interleaver_input.bin",
-                            reference_file_path="bit_interleaver_output.bin",
-                        ),
+                        test_cfg=config.getTestConfigString(),
                         NUMBER_OF_TEST_FRAMES=8,
                     ),
                 )
@@ -502,7 +465,7 @@ def main():
     vunit.main()
 
 
-def addAllConfigsTest(entity, configs, input_file_basename, reference_file_basename):
+def addAllConfigsTest(entity, configs):
     """
     Adds a test config with all combinations of configurations (assuming both
     input and reference files ca be found)
@@ -510,9 +473,7 @@ def addAllConfigsTest(entity, configs, input_file_basename, reference_file_basen
     params = []
 
     for config in configs:
-        params += [
-            config.getTestConfigString(input_file_basename, reference_file_basename)
-        ]
+        params += [config.getTestConfigString()]
 
     random.shuffle(params)
 

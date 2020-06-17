@@ -214,20 +214,20 @@ begin
       constant config           : config_t;
       constant number_of_frames : in positive) is
       variable file_reader_msg  : msg_t;
+      constant data_path        : string := strip(config.base_path, chars => (1 to 1 => nul));
     begin
 
       info("Running test with:");
       info(" - constellation  : " & constellation_t'image(config.constellation));
       info(" - frame_type     : " & frame_type_t'image(config.frame_type));
       info(" - code_rate      : " & code_rate_t'image(config.code_rate));
-      info(" - input_file     : " & config.files.input);
-      info(" - reference_file : " & config.files.reference);
+      info(" - data path      : " & data_path);
 
       for i in 0 to number_of_frames - 1 loop
         file_reader_msg := new_msg;
         file_reader_msg.sender := self;
 
-        push(file_reader_msg, config.files.input);
+        push(file_reader_msg, data_path & "/bit_interleaver_input.bin");
         push(file_reader_msg, config.constellation);
         push(file_reader_msg, config.frame_type);
         push(file_reader_msg, config.code_rate);
@@ -236,7 +236,7 @@ begin
         read_file(
           net,
           file_checker,
-          config.files.reference,
+          data_path & "/bit_interleaver_output.bin",
           get_checker_data_ratio(config.constellation)
         );
 

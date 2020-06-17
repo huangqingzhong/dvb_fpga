@@ -48,7 +48,7 @@ package dvb_sim_utils_pkg is
     constellation : constellation_t;
     frame_type    : frame_type_t;
     code_rate     : code_rate_t;
-    files         : file_pair_t;
+    base_path     : string(1 to 256);
   end record;
 
   type config_array_t is array (natural range <>) of config_t;
@@ -130,20 +130,20 @@ package body dvb_sim_utils_pkg is
     push(msg, value.constellation);
     push(msg, value.frame_type);
     push(msg, value.code_rate);
-    push(msg, value.files);
+    push(msg, value.base_path);
   end;
 
   impure function pop(msg : msg_t) return config_t is
     constant constellation : constellation_t := pop(msg);
     constant frame_type    : frame_type_t    := pop(msg);
     constant code_rate     : code_rate_t     := pop(msg);
-    constant files         : file_pair_t     := pop(msg);
+    constant base_path     : string          := pop(msg);
   begin
     return (
       constellation => constellation,
       frame_type    => frame_type,
       code_rate     => code_rate,
-      files         => files);
+      base_path     => base_path);
   end;
 
   --
@@ -163,18 +163,16 @@ package body dvb_sim_utils_pkg is
     for i in 0 to cfg_strings'length - 1 loop
       cfg_items := split(cfg_strings(i).all, ",");
 
-      if cfg_items'length /= 5 then
+      if cfg_items'length /= 4 then
         failure("Malformed config string " & quote(cfg_strings(i).all));
       end if;
 
       current.constellation := constellation_t'value(cfg_items(0).all);
       current.frame_type := frame_type_t'value(cfg_items(1).all);
       current.code_rate := code_rate_t'value(cfg_items(2).all);
-      current.files.input := (others => nul);
-      current.files.reference := (others => nul);
 
-      current.files.input(cfg_items(3).all'range) := cfg_items(3).all;
-      current.files.reference(cfg_items(4).all'range) := cfg_items(4).all;
+      current.base_path := (others => nul);
+      current.base_path(cfg_items(3).all'range) := cfg_items(3).all;
 
       result(i) := current;
 
@@ -240,8 +238,7 @@ package body dvb_sim_utils_pkg is
       & "constellation=" & quote(constellation_t'image(config.constellation)) & ", "
       & "frame_type=" & quote(frame_type_t'image(config.frame_type)) & ", "
       & "code_rate=" & quote(code_rate_t'image(config.code_rate)) & ", "
-      & "input=" & quote(config.files.input) & ", "
-      & "reference=" & quote(config.files.reference) & ")";
+      & "base_path=" & quote(config.base_path) & ")";
   end function to_string;
 
   -- Returns a string representation of config_t

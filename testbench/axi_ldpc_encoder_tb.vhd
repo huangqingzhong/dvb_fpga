@@ -243,17 +243,16 @@ begin
     procedure run_test ( -- {{ ---------------------------------------------------------
       constant config           : config_t;
       constant number_of_frames : in positive) is
-      constant tb_path          : string := get(runner_cfg, "tb path");
+      constant data_path        : string := strip(config.base_path, chars => (1 to 1 => nul));
       variable file_reader_msg  : msg_t;
       variable calc_ldpc_msg    : msg_t;
     begin
 
-      info(logger, "Running test with:");
-      info(logger, " - constellation  : " & constellation_t'image(config.constellation));
-      info(logger, " - frame_type     : " & frame_type_t'image(config.frame_type));
-      info(logger, " - code_rate      : " & code_rate_t'image(config.code_rate));
-      info(logger, " - input_file     : " & config.files.input);
-      info(logger, " - reference_file : " & config.files.reference);
+      info("Running test with:");
+      info(" - constellation  : " & constellation_t'image(config.constellation));
+      info(" - frame_type     : " & frame_type_t'image(config.frame_type));
+      info(" - code_rate      : " & code_rate_t'image(config.code_rate));
+      info(" - data path      : " & data_path);
 
       for i in 0 to number_of_frames - 1 loop
         debug(logger, "Setting up frame #" & to_string(i));
@@ -261,7 +260,7 @@ begin
         -- File reader message
         file_reader_msg := new_msg(sender => self);
 
-        push(file_reader_msg, config.files.input);
+        push(file_reader_msg, data_path & "/ldpc_encoder_input.bin");
         push(file_reader_msg, config.constellation);
         push(file_reader_msg, config.frame_type);
         push(file_reader_msg, config.code_rate);
@@ -277,18 +276,11 @@ begin
         read_file(
           net,
           file_checker,
-          config.files.reference,
+          data_path & "/bit_interleaver_input.bin",
           "1:8"
         );
 
-        read_file(
-          net,
-          ldpc_table,
-          tb_path &
-          "/../misc/ldpc/ldpc_table_" &
-          upper(frame_type_t'image(config.frame_type)) & "_" &
-          upper(code_rate_t'image(config.code_rate)) & ".bin"
-        );
+        read_file(net, ldpc_table, data_path & "/ldpc_table.bin");
 
       end loop;
 

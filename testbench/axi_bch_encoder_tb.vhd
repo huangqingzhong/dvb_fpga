@@ -198,25 +198,25 @@ begin
       constant config           : config_t;
       constant number_of_frames : in positive := NUMBER_OF_TEST_FRAMES) is
       variable file_reader_msg  : msg_t;
+      constant data_path        : string := strip(config.base_path, chars => (1 to 1 => nul));
     begin
 
       info("Running test with:");
       info(" - constellation  : " & constellation_t'image(config.constellation));
       info(" - frame_type     : " & frame_type_t'image(config.frame_type));
       info(" - code_rate      : " & code_rate_t'image(config.code_rate));
-      info(" - input_file     : " & config.files.input);
-      info(" - reference_file : " & config.files.reference);
+      info(" - data path      : " & data_path);
 
       for i in 0 to number_of_frames - 1 loop
         file_reader_msg := new_msg;
         file_reader_msg.sender := self;
 
-        push(file_reader_msg, config.files.input);
+        push(file_reader_msg, data_path & "/bch_encoder_input.bin");
         push(file_reader_msg, config.frame_type);
         push(file_reader_msg, config.code_rate);
 
         send(net, input_cfg_p, file_reader_msg);
-        read_file(net, file_checker, config.files.reference, "1:8");
+        read_file(net, file_checker, data_path & "/ldpc_encoder_input.bin", "1:8");
 
       end loop;
 

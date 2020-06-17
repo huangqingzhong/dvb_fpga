@@ -257,26 +257,20 @@ begin
       constant config           : config_t;
       constant number_of_frames : in positive) is
       variable file_reader_msg  : msg_t;
-      constant ldpc_table_file : string :=
-        tb_path &
-        "/../misc/ldpc/ldpc_table_" &
-        upper(frame_type_t'image(config.frame_type)) & "_" &
-        upper(code_rate_t'image(config.code_rate)) & ".bin";
+      constant data_path        : string := strip(config.base_path, chars => (1 to 1 => nul));
     begin
 
       info("Running test with:");
       info(" - constellation  : " & constellation_t'image(config.constellation));
       info(" - frame_type     : " & frame_type_t'image(config.frame_type));
       info(" - code_rate      : " & code_rate_t'image(config.code_rate));
-      info(" - input_file     : " & config.files.input);
-      info(" - LDPC table     : " & ldpc_table_file);
-      info(" - reference_file : " & config.files.reference);
+      info(" - data path      : " & data_path);
 
       for i in 0 to number_of_frames - 1 loop
         file_reader_msg := new_msg;
         file_reader_msg.sender := self;
 
-        push(file_reader_msg, config.files.input);
+        push(file_reader_msg, data_path & "/bb_scrambler_input.bin");
         push(file_reader_msg, config.constellation);
         push(file_reader_msg, config.frame_type);
         push(file_reader_msg, config.code_rate);
@@ -285,11 +279,11 @@ begin
         read_file(
           net,
           file_checker,
-          config.files.reference,
+          data_path & "/bit_interleaver_output.bin",
           get_checker_data_ratio(config.constellation)
         );
 
-        read_file(net, ldpc_table, ldpc_table_file);
+        read_file(net, ldpc_table, data_path & "/ldpc_table.bin");
 
       end loop;
 
@@ -319,8 +313,6 @@ begin
 
       data_probability <= 1.0;
       tready_probability <= 1.0;
-
-      -- set_timeout(runner, configs'length * NUMBER_OF_TEST_FRAMES * 4 ms / DATA_WIDTH);
 
       if run("back_to_back") then
         data_probability <= 1.0;
