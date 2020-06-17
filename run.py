@@ -491,9 +491,11 @@ def main():
     vunit.set_compile_option("ghdl.a_flags", ["-frelaxed-rules", "-O2", "-g"])
 
     # Make components not bound (error 3473) an error
-    vunit.set_sim_option(
-        "modelsim.vsim_flags", ["-error", "3473", '-voptargs="+acc=n"']
-    )
+    vsim_flags = ["-error", "3473"]
+    if args.gui:
+        vsim_flags += ['-voptargs="+acc=n"']
+
+    vunit.set_sim_option("modelsim.vsim_flags", vsim_flags)
 
     vunit.set_sim_option("disable_ieee_warnings", True)
     vunit.set_sim_option("modelsim.init_file.gui", p.join(ROOT, "wave.do"))
