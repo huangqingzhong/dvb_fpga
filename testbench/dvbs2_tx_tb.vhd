@@ -386,6 +386,7 @@ begin
     end if;
   end process;
 
+-- ghdl translate_off
   signal_spy_block : block
     type tdata_array_t is array (natural range <>) of std_logic_vector(DATA_WIDTH - 1 downto 0);
     signal tdata         : tdata_array_t(4 downto 0);
@@ -423,5 +424,6 @@ begin
       wait;
     end process;
   end block signal_spy_block;
+-- ghdl translate_on
 
 end dvbs2_tx_tb;
