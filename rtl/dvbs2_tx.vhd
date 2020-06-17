@@ -82,11 +82,14 @@ architecture dvbs2_tx of dvbs2_tx is
   signal frame_type    : frame_type_array_t(CHAIN_LENGTH - 1 downto 0);
   signal constellation : constellation_array_t(CHAIN_LENGTH - 1 downto 0);
   signal code_rate     : code_rate_array_t(CHAIN_LENGTH - 1 downto 0);
+
   signal tdata         : tdata_array_t(CHAIN_LENGTH - 1 downto 0);
   signal tvalid        : std_logic_vector(CHAIN_LENGTH - 1 downto 0);
   signal tready        : std_logic_vector(CHAIN_LENGTH - 1 downto 0);
   signal tlast         : std_logic_vector(CHAIN_LENGTH - 1 downto 0);
+
   signal axi_dv        : std_logic_vector(CHAIN_LENGTH - 1 downto 0);
+
   signal cfg_sample_en : std_logic_vector(CHAIN_LENGTH - 1 downto 0);
   signal first_word    : std_logic_vector(CHAIN_LENGTH - 1 downto 0);
 

@@ -46,6 +46,11 @@ use fpga_cores_sim.file_utils_pkg.all;
 use work.dvb_utils_pkg.all;
 use work.dvb_sim_utils_pkg.all;
 
+-- ghdl translate_off
+library modelsim_lib;
+use modelsim_lib.util.all;
+-- ghdl translate_on
+
 entity dvbs2_tx_tb is
   generic (
     RUNNER_CFG            : string;
@@ -115,6 +120,12 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
   signal tdata_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
   signal tlast_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
   signal error_cnt          : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
+
+
+  signal axi_bb_scrambler    : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
+  signal axi_bch_encoder     : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
+  signal axi_ldpc_encoder    : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
+  signal axi_bit_interleaver : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
 
 begin
 
@@ -246,6 +257,11 @@ begin
       constant config           : config_t;
       constant number_of_frames : in positive) is
       variable file_reader_msg  : msg_t;
+      constant ldpc_table_file : string :=
+        tb_path &
+        "/../misc/ldpc/ldpc_table_" &
+        upper(frame_type_t'image(config.frame_type)) & "_" &
+        upper(code_rate_t'image(config.code_rate)) & ".bin";
     begin
 
       info("Running test with:");
@@ -253,6 +269,7 @@ begin
       info(" - frame_type     : " & frame_type_t'image(config.frame_type));
       info(" - code_rate      : " & code_rate_t'image(config.code_rate));
       info(" - input_file     : " & config.files.input);
+      info(" - LDPC table     : " & ldpc_table_file);
       info(" - reference_file : " & config.files.reference);
 
       for i in 0 to number_of_frames - 1 loop
@@ -272,15 +289,7 @@ begin
           get_checker_data_ratio(config.constellation)
         );
 
-        read_file(
-          net,
-          ldpc_table,
-          tb_path &
-          "/../misc/ldpc/ldpc_table_" &
-          upper(frame_type_t'image(config.frame_type)) & "_" &
-          upper(code_rate_t'image(config.code_rate)) & ".bin"
-        );
-
+        read_file(net, ldpc_table, ldpc_table_file);
 
       end loop;
 
@@ -384,5 +393,43 @@ begin
       check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
     end if;
   end process;
+
+  signal_spy_block : block
+    type tdata_array_t is array (natural range <>) of std_logic_vector(DATA_WIDTH - 1 downto 0);
+    signal tdata         : tdata_array_t(4 downto 0);
+    signal tvalid        : std_logic_vector(4 downto 0);
+    signal tready        : std_logic_vector(4 downto 0);
+    signal tlast         : std_logic_vector(4 downto 0);
+  begin
+
+    axi_bb_scrambler.tdata     <= tdata(1);
+    axi_bb_scrambler.tvalid    <= tvalid(1);
+    axi_bb_scrambler.tready    <= tready(1);
+    axi_bb_scrambler.tlast     <= tlast(1);
+
+    axi_bch_encoder.tdata      <= tdata(2);
+    axi_bch_encoder.tvalid     <= tvalid(2);
+    axi_bch_encoder.tready     <= tready(2);
+    axi_bch_encoder.tlast      <= tlast(2);
+
+    axi_ldpc_encoder.tdata     <= tdata(3);
+    axi_ldpc_encoder.tvalid    <= tvalid(3);
+    axi_ldpc_encoder.tready    <= tready(3);
+    axi_ldpc_encoder.tlast     <= tlast(3);
+
+    axi_bit_interleaver.tdata  <= tdata(4);
+    axi_bit_interleaver.tvalid <= tvalid(4);
+    axi_bit_interleaver.tready <= tready(4);
+    axi_bit_interleaver.tlast  <= tlast(4);
+
+    process
+    begin
+      init_signal_spy("/dvbs2_tx_tb/dut/tdata",  "/dvbs2_tx_tb/signal_spy_block/tdata",  0);
+      init_signal_spy("/dvbs2_tx_tb/dut/tvalid", "/dvbs2_tx_tb/signal_spy_block/tvalid", 0);
+      init_signal_spy("/dvbs2_tx_tb/dut/tlast",  "/dvbs2_tx_tb/signal_spy_block/tlast",  0);
+      init_signal_spy("/dvbs2_tx_tb/dut/tready", "/dvbs2_tx_tb/signal_spy_block/tready", 0);
+      wait;
+    end process;
+  end block signal_spy_block;
 
 end dvbs2_tx_tb;
