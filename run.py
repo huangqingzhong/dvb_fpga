@@ -396,6 +396,17 @@ def main():
                 ),
             )
 
+            vunit.library("lib").entity("dvbs2_tx_tb").add_config(
+                name=config.name,
+                generics=dict(
+                    test_cfg=config.getTestConfigString(
+                        input_file_path="bb_scrambler_input.bin",
+                        reference_file_path="bit_interleaver_output.bin",
+                    ),
+                    NUMBER_OF_TEST_FRAMES=2,
+                ),
+            )
+
         # Only generate configs for 8 PSK since LDPC does not depend on this
         # parameter
         for config in _getConfigs(constellations=(ConstellationType.MOD_8PSK,),):
@@ -430,6 +441,14 @@ def main():
             input_file_basename="ldpc_encoder_input.bin",
             reference_file_basename="bit_interleaver_input.bin",
         )
+
+        addAllConfigsTest(
+            entity=vunit.library("lib").entity("dvbs2_tx_tb"),
+            configs=TEST_CONFIGS,
+            input_file_basename="bb_scrambler_input.bin",
+            reference_file_basename="bit_interleaver_output.bin",
+        )
+
 
     # Generate bit interleaver tests
     for data_width in (1, 8):

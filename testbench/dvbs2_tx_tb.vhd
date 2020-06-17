@@ -1,3 +1,4 @@
+-- vim: set foldmethod=marker foldmarker=--\ {{,--\ }} :
 --
 -- DVB FPGA
 --
@@ -104,13 +105,6 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
 
   -- AXI LDPC table input
   signal axi_ldpc           : axi_stream_data_bus_t(tdata(2*numbits(max(DVB_N_LDPC)) + 8 - 1 downto 0));
-  -- signal axi_ldpc.tready     : std_logic;
-  -- signal axi_ldpc.tready     : std_logic;
-  -- signal axi_ldpc.tdata     : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-  -- signal axi_ldpc.tdata       : std_logic;
-  -- signal axi_ldpc.tdata      : std_logic_vector(numbits(max(DVB_N_LDPC)) - 1 downto 0);
-  -- signal axi_ldpc.tlast      : std_logic;
-
 
   -- AXI output
   signal axi_slave          : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
@@ -232,22 +226,23 @@ begin
   ---------------
   -- Processes --
   ---------------
-  main : process
-    constant self         : actor_t := new_actor("main");
-    constant input_cfg_p  : actor_t := find("input_cfg_p");
+  main : process -- {{ -----------------------------------------------------------------
+    constant self         : actor_t       := new_actor("main");
+    constant input_cfg_p  : actor_t       := find("input_cfg_p");
     variable file_checker : file_reader_t := new_file_reader(FILE_CHECKER_NAME);
-    ------------------------------------------------------------------------------------
-    procedure walk(constant steps : natural) is
+    variable ldpc_table   : file_reader_t := new_file_reader(LDPC_READER_NAME);
+    constant tb_path      : string        := get(runner_cfg, "tb path");
+
+    procedure walk(constant steps : natural) is -- {{ ----------------------------------
     begin
       if steps /= 0 then
         for step in 0 to steps - 1 loop
           wait until rising_edge(clk);
         end loop;
       end if;
-    end procedure walk;
+    end procedure walk; -- }} ----------------------------------------------------------
 
-    ------------------------------------------------------------------------------------
-    procedure run_test (
+    procedure run_test ( -- {{ ---------------------------------------------------------
       constant config           : config_t;
       constant number_of_frames : in positive) is
       variable file_reader_msg  : msg_t;
@@ -277,22 +272,30 @@ begin
           get_checker_data_ratio(config.constellation)
         );
 
+        read_file(
+          net,
+          ldpc_table,
+          tb_path &
+          "/../misc/ldpc/ldpc_table_" &
+          upper(frame_type_t'image(config.frame_type)) & "_" &
+          upper(code_rate_t'image(config.code_rate)) & ".bin"
+        );
+
+
       end loop;
 
-    end procedure run_test;
+    end procedure run_test; -- }} ------------------------------------------------------
 
-    ------------------------------------------------------------------------------------
-    procedure wait_for_transfers ( constant count : in natural) is
+    procedure wait_for_completion is -- {{ ---------------------------------------------
       variable msg : msg_t;
     begin
-      -- Will get one response for each frame from the file checker and one for the input
-      -- config. The order shouldn't matter
       receive(net, self, msg);
-      -- Failure(sformat("Got reply from '%s'", name(msg.sender)));
-
       wait_all_read(net, file_checker);
-    end procedure wait_for_transfers;
-    ------------------------------------------------------------------------------------
+
+      wait until rising_edge(clk) and axi_slave.tvalid = '0' for 1 ms;
+
+      walk(1);
+    end procedure wait_for_completion; -- }} -------------------------------------------
 
   begin
 
@@ -314,18 +317,17 @@ begin
         data_probability <= 1.0;
         tready_probability <= 1.0;
 
-        -- for i in configs'range loop
-        --   run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
-        -- end loop;
+        for i in configs'range loop
+          run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
+        end loop;
 
-        -- wait_for_transfers(configs'length);
+        wait_for_completion;
 
       end if;
 
-      walk(1);
-
       check_false(has_message(input_cfg_p));
 
+      check_equal(axi_slave.tvalid, '0', "axi_slave.tvalid should be '0'");
       check_equal(error_cnt, 0);
 
       walk(32);
@@ -334,9 +336,9 @@ begin
 
     test_runner_cleanup(runner);
     wait;
-  end process;
+  end process; -- }} -------------------------------------------------------------------
 
-  input_cfg_p : process
+  input_cfg_p : process -- {{ ----------------------------------------------------------
     constant self        : actor_t := new_actor("input_cfg_p");
     constant main        : actor_t := find("main");
     variable cfg_msg     : msg_t;
@@ -373,7 +375,7 @@ begin
       send(net, main, cfg_msg);
     end if;
     check_equal(error_cnt, 0);
-  end process;
+  end process; -- }} -------------------------------------------------------------------
 
   process
   begin
