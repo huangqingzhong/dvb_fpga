@@ -66,13 +66,13 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
   constant configs           : config_array_t := get_test_cfg(TEST_CFG);
   constant DATA_WIDTH        : integer := 8;
 
-  constant LDPC_READER_NAME        : string  := "ldpc_table";
-  constant FILE_READER_NAME        : string  := "file_reader";
-  constant FILE_CHECKER_NAME       : string  := "file_checker";
+  constant LDPC_TABLE_READER_NAME     : string  := "ldpc_table";
+  constant FILE_READER_NAME           : string  := "input";
+  constant FILE_CHECKER_NAME          : string  := "output";
 
-  constant BB_SCRAMBLER_CHECKER    : string  := "bb_scrambler_checker";
-  constant BCH_ENCODER_CHECKER     : string  := "bch_encoder_checker";
-  constant LDPC_ENCODER_CHECKER    : string  := "ldpc_encoder_checker";
+  constant BB_SCRAMBLERS_CHECKER_NAME : string  := "bb_scrambler";
+  constant BCH_ENCODER_CHECKER_NAME   : string  := "bch_encoder";
+  constant LDPC_ENCODER_CHECKER_NAME  : string  := "ldpc_encoder";
 
   constant CLK_PERIOD        : time := 5 ns;
   constant ERROR_CNT_WIDTH   : integer := 8;
@@ -125,20 +125,12 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
   signal axi_ldpc           : axi_stream_data_bus_t(tdata(2*numbits(max(DVB_N_LDPC)) + 8 - 1 downto 0));
 
   -- AXI output
-  signal axi_slave          : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
   signal s_data_valid       : boolean;
-
-  signal expected_tdata     : std_logic_vector(DATA_WIDTH - 1 downto 0);
-  signal expected_tlast     : std_logic;
-  signal tdata_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
-  signal tlast_error_cnt    : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
-  signal error_cnt          : std_logic_vector(ERROR_CNT_WIDTH - 1 downto 0);
 
   signal axi_bb_scrambler    : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
   signal axi_bch_encoder     : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
   signal axi_ldpc_encoder    : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
-  signal axi_bit_interleaver : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
-
+  signal axi_slave           : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
 
 begin
 
@@ -170,16 +162,16 @@ begin
       s_ldpc_tready     => axi_ldpc.tready,
 
       -- AXI output
-      m_tready          => axi_slave.tready,
-      m_tvalid          => axi_slave.tvalid,
-      m_tlast           => axi_slave.tlast,
-      m_tdata           => axi_slave.tdata);
+      m_tready          => axi_slave.axi.tready,
+      m_tvalid          => axi_slave.axi.tvalid,
+      m_tlast           => axi_slave.axi.tlast,
+      m_tdata           => axi_slave.axi.tdata);
 
 
   -- AXI file read
   axi_table_u : entity fpga_cores_sim.axi_file_reader
     generic map (
-      READER_NAME => LDPC_READER_NAME,
+      READER_NAME => LDPC_TABLE_READER_NAME,
       DATA_WIDTH  => axi_ldpc.tdata'length)
     port map (
       -- Usual ports
@@ -215,7 +207,7 @@ begin
 
   bb_scrambler_checker_u : entity fpga_cores_sim.axi_file_compare
     generic map (
-      READER_NAME     => BB_SCRAMBLER_CHECKER,
+      READER_NAME     => BB_SCRAMBLERS_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
       REPORT_SEVERITY => Error,
       DATA_WIDTH      => DATA_WIDTH)
@@ -239,7 +231,7 @@ begin
 
   bch_encoder_checker_u : entity fpga_cores_sim.axi_file_compare
     generic map (
-      READER_NAME     => BCH_ENCODER_CHECKER,
+      READER_NAME     => BCH_ENCODER_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
       REPORT_SEVERITY => Error,
       DATA_WIDTH      => DATA_WIDTH)
@@ -263,7 +255,7 @@ begin
 
   ldpc_encoder_checker_u : entity fpga_cores_sim.axi_file_compare
     generic map (
-      READER_NAME     => LDPC_ENCODER_CHECKER,
+      READER_NAME     => LDPC_ENCODER_CHECKER_NAME,
       ERROR_CNT_WIDTH => ERROR_CNT_WIDTH,
       REPORT_SEVERITY => Error,
       DATA_WIDTH      => DATA_WIDTH)
@@ -296,18 +288,18 @@ begin
       clk                => clk,
       rst                => rst,
       -- Config and status
-      tdata_error_cnt    => tdata_error_cnt,
-      tlast_error_cnt    => tlast_error_cnt,
-      error_cnt          => error_cnt,
+      tdata_error_cnt    => axi_slave.tdata_error_cnt,
+      tlast_error_cnt    => axi_slave.tlast_error_cnt,
+      error_cnt          => axi_slave.error_cnt,
       tready_probability => tready_probability,
       -- Debug stuff
-      expected_tdata     => expected_tdata,
-      expected_tlast     => expected_tlast,
+      expected_tdata     => axi_slave.expected_tdata,
+      expected_tlast     => axi_slave.expected_tlast,
       -- Data input
-      s_tready           => axi_slave.tready,
-      s_tdata            => axi_slave.tdata,
-      s_tvalid           => axi_slave.tvalid,
-      s_tlast            => axi_slave.tlast);
+      s_tready           => axi_slave.axi.tready,
+      s_tdata            => axi_slave.axi.tdata,
+      s_tvalid           => axi_slave.axi.tvalid,
+      s_tlast            => axi_slave.axi.tlast);
 
   ------------------------------
   -- Asynchronous assignments --
@@ -317,7 +309,7 @@ begin
   test_runner_watchdog(runner, 3 ms);
 
   m_data_valid <= axi_master.tvalid = '1' and axi_master.tready = '1';
-  s_data_valid <= axi_slave.tvalid = '1' and axi_slave.tready = '1';
+  s_data_valid <= axi_slave.axi.tvalid = '1' and axi_slave.axi.tready = '1';
 
   ---------------
   -- Processes --
@@ -326,11 +318,11 @@ begin
     constant self                    : actor_t       := new_actor("main");
     constant input_cfg_p             : actor_t       := find("input_cfg_p");
     variable file_checker            : file_reader_t := new_file_reader(FILE_CHECKER_NAME);
-    variable ldpc_table              : file_reader_t := new_file_reader(LDPC_READER_NAME);
+    variable ldpc_table              : file_reader_t := new_file_reader(LDPC_TABLE_READER_NAME);
 
-    variable bb_scrambler_checker    : file_reader_t := new_file_reader(BB_SCRAMBLER_CHECKER);
-    variable bch_encoder_checker     : file_reader_t := new_file_reader(BCH_ENCODER_CHECKER);
-    variable ldpc_encoder_checker    : file_reader_t := new_file_reader(LDPC_ENCODER_CHECKER);
+    variable bb_scrambler_checker    : file_reader_t := new_file_reader(BB_SCRAMBLERS_CHECKER_NAME);
+    variable bch_encoder_checker     : file_reader_t := new_file_reader(BCH_ENCODER_CHECKER_NAME);
+    variable ldpc_encoder_checker    : file_reader_t := new_file_reader(LDPC_ENCODER_CHECKER_NAME);
 
     procedure walk(constant steps : natural) is -- {{ ----------------------------------
     begin
@@ -388,7 +380,7 @@ begin
       receive(net, self, msg);
       wait_all_read(net, file_checker);
 
-      wait until rising_edge(clk) and axi_slave.tvalid = '0' for 1 ms;
+      wait until rising_edge(clk) and axi_slave.axi.tvalid = '0' for 1 ms;
 
       walk(1);
     end procedure wait_for_completion; -- }} -------------------------------------------
@@ -397,6 +389,9 @@ begin
 
     test_runner_setup(runner, RUNNER_CFG);
     show(display_handler, debug);
+    hide(get_logger("file_reader_t(" & FILE_READER_NAME & ")"), display_handler, debug, True);
+    hide(get_logger("file_reader_t(" & FILE_CHECKER_NAME & ")"), display_handler, debug, True);
+    hide(get_logger("file_reader_t(" & LDPC_TABLE_READER_NAME & ")"), display_handler, debug, True);
 
     while test_suite loop
       rst <= '1';
@@ -421,8 +416,8 @@ begin
 
       check_false(has_message(input_cfg_p));
 
-      check_equal(axi_slave.tvalid, '0', "axi_slave.tvalid should be '0'");
-      check_equal(error_cnt, 0);
+      check_equal(axi_slave.axi.tvalid, '0', "axi_slave.axi.tvalid should be '0'");
+      check_equal(axi_slave.error_cnt, 0);
 
       walk(32);
 
@@ -468,14 +463,14 @@ begin
       cfg_msg.sender := self;
       send(net, main, cfg_msg);
     end if;
-    check_equal(error_cnt, 0);
+    check_equal(axi_slave.error_cnt, 0);
   end process; -- }} -------------------------------------------------------------------
 
   process
   begin
     wait until rising_edge(clk);
     if rst = '0' then
-      check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
+      check_equal(axi_slave.error_cnt, 0, sformat("Expected 0 errors but got %d", fo(axi_slave.error_cnt)));
     end if;
   end process;
 
@@ -503,11 +498,6 @@ begin
     axi_ldpc_encoder.axi.tready    <= tready(3);
     axi_ldpc_encoder.axi.tlast     <= tlast(3);
 
-    axi_bit_interleaver.axi.tdata  <= tdata(4);
-    axi_bit_interleaver.axi.tvalid <= tvalid(4);
-    axi_bit_interleaver.axi.tready <= tready(4);
-    axi_bit_interleaver.axi.tlast  <= tlast(4);
-
     process
     begin
       init_signal_spy("/dvbs2_tx_tb/dut/tdata",  "/dvbs2_tx_tb/signal_spy_block/tdata",  0);
@@ -515,6 +505,32 @@ begin
       init_signal_spy("/dvbs2_tx_tb/dut/tlast",  "/dvbs2_tx_tb/signal_spy_block/tlast",  0);
       init_signal_spy("/dvbs2_tx_tb/dut/tready", "/dvbs2_tx_tb/signal_spy_block/tready", 0);
       wait;
+    end process;
+
+    check_no_axi_undefined_p: process(clk)
+      function get_stage_name ( constant index : natural range 1 to 4 ) return string is
+      begin
+        case index is
+          when 1 => return "baseband scrambler";
+          when 2 => return "BCH encoder";
+          when 3 => return "LDPC encoder";
+          when others => null;
+        end case;
+
+        return "bit interleaver";
+
+      end;
+
+    begin
+      if rising_edge(clk) then
+        for i in 1 to 4 loop
+
+          if tvalid(i) = '1' and tready(i) = '1' and tdata(i) /= to_01(tdata(i)) then
+            warning(sformat("Stage %d / %s has undefined AXI data", fo(i), get_stage_name(i)));
+          end if;
+
+        end loop;
+      end if;
     end process;
   end block signal_spy_block;
 -- ghdl translate_on

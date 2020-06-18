@@ -244,18 +244,16 @@ begin
 
     end procedure run_test;
 
-    ------------------------------------------------------------------------------------
-    procedure wait_for_transfers ( constant count : in natural) is
+    procedure wait_for_completion is -- {{ ---------------------------------------------
       variable msg : msg_t;
     begin
-      -- Will get one response for each frame from the file checker and one for the input
-      -- config. The order shouldn't matter
       receive(net, self, msg);
-      -- Failure(sformat("Got reply from '%s'", name(msg.sender)));
-
       wait_all_read(net, file_checker);
-    end procedure wait_for_transfers;
-    ------------------------------------------------------------------------------------
+
+      wait until rising_edge(clk) and s_tvalid = '0' for 1 ms;
+
+      walk(1);
+    end procedure wait_for_completion; -- }} -------------------------------------------
 
   begin
 
@@ -281,8 +279,6 @@ begin
           run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
 
-        wait_for_transfers(configs'length);
-
       elsif run("slow_master") then
         tvalid_probability <= 0.5;
         tready_probability <= 1.0;
@@ -290,7 +286,6 @@ begin
         for i in configs'range loop
           run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
-        wait_for_transfers(configs'length);
 
       elsif run("slow_slave") then
         tvalid_probability <= 1.0;
@@ -299,7 +294,6 @@ begin
         for i in configs'range loop
           run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
-        wait_for_transfers(configs'length);
 
       elsif run("both_slow") then
         tvalid_probability <= 0.75;
@@ -308,9 +302,10 @@ begin
         for i in configs'range loop
           run_test(configs(i), number_of_frames => NUMBER_OF_TEST_FRAMES);
         end loop;
-        wait_for_transfers(configs'length);
 
       end if;
+
+      wait_for_completion;
 
       walk(1);
 
