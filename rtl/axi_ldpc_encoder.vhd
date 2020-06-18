@@ -420,7 +420,7 @@ begin
       s_ldpc_next_sampled  <= '0';
 
       -- Set the last word according to the pipeline_context_ram ready
-      if frame_out_last and frame_ram_en_reg0 then
+      if frame_out_last = '1' and frame_ram_en_reg0 = '1' then
         encoded_wr_last <= '1';
         encoded_wr_mask <= frame_out_mask and (frame_out_mask'range => frame_ram_en_reg0);
       elsif encoded_wr_en = '1' then
