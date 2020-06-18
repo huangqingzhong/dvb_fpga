@@ -319,7 +319,7 @@ begin
 
       walk(32);
 
-      set_timeout(runner, configs'length * 5 ms);
+      set_timeout(runner, configs'length * 10 ms);
 
       if run("back_to_back") then
         data_probability   <= 1.0;

@@ -400,14 +400,10 @@ def main():
                     test_cfg=config.getTestConfigString(), NUMBER_OF_TEST_FRAMES=3,
                 ),
             )
+
     else:
         addAllConfigsTest(
             entity=vunit.library("lib").entity("axi_bch_encoder_tb"),
-            configs=TEST_CONFIGS,
-        )
-
-        addAllConfigsTest(
-            entity=vunit.library("lib").entity("axi_baseband_scrambler_tb"),
             configs=TEST_CONFIGS,
         )
 
@@ -420,6 +416,11 @@ def main():
             entity=vunit.library("lib").entity("dvbs2_tx_tb"),
             configs=tuple(TEST_CONFIGS)[0:2],
         )
+
+    addAllConfigsTest(
+        entity=vunit.library("lib").entity("axi_baseband_scrambler_tb"),
+        configs=TEST_CONFIGS,
+    )
 
     # Generate bit interleaver tests
     for data_width in (1, 8):
