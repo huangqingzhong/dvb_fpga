@@ -333,6 +333,17 @@ begin
       end if;
     end procedure walk; -- }} ----------------------------------------------------------
 
+    procedure wait_for_completion is -- {{ ---------------------------------------------
+      variable msg : msg_t;
+    begin
+      receive(net, self, msg);
+      wait_all_read(net, file_checker);
+
+      wait until rising_edge(clk) and axi_slave.axi.tvalid = '0' for 1 ms;
+
+      walk(1);
+    end procedure wait_for_completion; -- }} -------------------------------------------
+
     procedure run_test ( -- {{ ---------------------------------------------------------
       constant config           : config_t;
       constant number_of_frames : in positive) is
@@ -370,20 +381,13 @@ begin
         read_file(net, bch_encoder_checker, data_path & "/ldpc_encoder_input.bin", "1:8");
         read_file(net, ldpc_encoder_checker, data_path & "/bit_interleaver_input.bin", "1:8");
 
+        wait_for_completion;
+
+        walk(256);
+
       end loop;
 
     end procedure run_test; -- }} ------------------------------------------------------
-
-    procedure wait_for_completion is -- {{ ---------------------------------------------
-      variable msg : msg_t;
-    begin
-      receive(net, self, msg);
-      wait_all_read(net, file_checker);
-
-      wait until rising_edge(clk) and axi_slave.axi.tvalid = '0' for 1 ms;
-
-      walk(1);
-    end procedure wait_for_completion; -- }} -------------------------------------------
 
   begin
 
@@ -526,7 +530,7 @@ begin
         for i in 1 to 4 loop
 
           if tvalid(i) = '1' and tready(i) = '1' and tdata(i) /= to_01(tdata(i)) then
-            warning(sformat("Stage %d / %s has undefined AXI data", fo(i), get_stage_name(i)));
+            warning(sformat("'%s' (%d) has undefined AXI data", get_stage_name(i), fo(i)));
           end if;
 
         end loop;

@@ -414,7 +414,7 @@ def main():
 
         addAllConfigsTest(
             entity=vunit.library("lib").entity("dvbs2_tx_tb"),
-            configs=tuple(TEST_CONFIGS)[0:2],
+            configs=tuple(TEST_CONFIGS),
         )
 
     addAllConfigsTest(
