@@ -79,11 +79,10 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   -------------
   -- Signals --
   -------------
-  signal s_axi_dv                  : std_logic;
   signal s_tready_i                : std_logic;
-  signal s_axi_dv_reg              : std_logic;
+
+  signal s_axi_dv                  : std_logic;
   signal s_tlast_reg               : std_logic;
-  signal s_tdata_reg               : std_logic_vector(DATA_WIDTH - 1 downto 0);
 
   -- RAM base pointers to handle back to back frames by writing and reading from different
   -- regions of the RAM. This will introduce 1 frame of latency though
@@ -98,23 +97,29 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal cfg_wr_cnt                : cfg_t;
   signal cfg_wr_en                 : std_logic;
   -- Write side counters
+  signal bit_cnt                   : unsigned(2*numbits(DATA_WIDTH) - 1 downto 0);
   signal wr_row_cnt                : unsigned(numbits(MAX_ROWS) - 1 downto 0);
   signal wr_column_cnt             : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
-  signal wr_column_cnt_reg0        : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
-  signal wr_column_cnt_reg1        : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
+  -- signal wr_column_cnt_reg1        : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
   signal wr_remainder              : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
-  signal wr_partial                : std_logic;
-  signal wr_partial_start          : integer range 0 to DATA_WIDTH - 1;
 
-  signal wr_data_mux               : data_array_t(DATA_WIDTH - 1 downto 0);
+  signal wr_data_mux               : data_array_t(2*DATA_WIDTH - 1 downto 0);
   signal last_word_mux             : data_array_t(DATA_WIDTH - 1 downto 0);
 
   signal wr_addr_init              : std_logic := '0';
 
   -- RAM write interface
-  signal ram_wr_addr               : addr_array_t(MAX_COLUMNS - 1 downto 0);
-  signal ram_wr_data               : data_array_t(MAX_COLUMNS - 1 downto 0);
-  signal ram_wr_en                 : std_logic_vector(MAX_COLUMNS - 1 downto 0);
+  type ram_wr_t is record
+    addr : unsigned(numbits(MAX_ROWS) + RAM_PTR_WIDTH - 1 downto 0);
+    data : std_logic_vector(DATA_WIDTH - 1 downto 0);
+    en   : std_logic;
+  end record;
+
+  type ram_wr_array_t is array (MAX_COLUMNS - 1 downto 0) of ram_wr_t;
+
+  signal ram_wr       : ram_wr_array_t;
+
+  signal dbg_tdata_sr : std_logic_vector(3*DATA_WIDTH - 1 downto 0);
 
   -- Read side config
   signal cfg_fifo_rd_constellation : constellation_t;
@@ -167,7 +172,7 @@ begin
     signal addr_b : std_logic_vector(numbits(MAX_ROWS) downto 0);
   begin
 
-    addr_a <= std_logic_vector(ram_wr_addr(column)(numbits(MAX_ROWS) downto 0));
+    addr_a <= std_logic_vector(ram_wr(column).addr(numbits(MAX_ROWS) downto 0));
     addr_b <= std_logic_vector(ram_rd_addr(numbits(MAX_ROWS) downto 0));
 
     ram : entity fpga_cores.ram_inference
@@ -180,9 +185,9 @@ begin
         -- Port A
         clk_a     => clk,
         clken_a   => '1',
-        wren_a    => ram_wr_en(column),
+        wren_a    => ram_wr(column).en,
         addr_a    => addr_a,
-        wrdata_a  => ram_wr_data(column),
+        wrdata_a  => ram_wr(column).data,
         rddata_a  => open,
 
         -- Port B
@@ -299,177 +304,113 @@ begin
     end generate iter_5_columns;
   end generate iter_rows;
 
-  s_axi_dv        <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
-
   ram_ptr_diff    <= wr_ram_ptr - rd_ram_ptr when wr_ram_ptr > rd_ram_ptr else
                      2**RAM_PTR_WIDTH + wr_ram_ptr - rd_ram_ptr;
 
   s_tready_i      <= '1' when ram_ptr_diff < 2 else '0';
 
+  s_axi_dv        <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
+
+  -- Pack addr/data/en just for visualizing in the waveform
+  -- g_dbg_ram_wr : for i in 0 to MAX_COLUMNS - 1 generate
+  --   ram_wr(i) <= (addr => ram_wr_addr(i), data => ram_wr_data(i), en => ram_wr_en(i));
+  -- end generate;
+
   -- Assign internals
   s_tready        <= s_tready_i;
-
-  -- Unwrap muxes explicitly, Vivado doesn't seem to understand if we do this on the fly
-  g_mux_inputs : for i in 0 to DATA_WIDTH - 1 generate
-    wr_data_mux(i) <= s_tdata_reg(DATA_WIDTH - i - 1 downto 0) &
-                      s_tdata(DATA_WIDTH - 1 downto DATA_WIDTH - i);
-
-    last_word_mux(i) <= s_tdata_reg(i - 1 downto 0) &
-                        (DATA_WIDTH - i - 1 downto 0 => '0');
-  end generate;
 
   --------------------------------
   -- Handle write side pointers --
   --------------------------------
   write_side_p : process(clk, rst)
-
-    -------------------------------------------------------------------------------------
-    function get_wr_cnt_max_values (
-      constant constellation : in constellation_t;
-      constant frame_type    : in frame_type_t) return cfg_t is
-      variable rows          : natural;
-      variable columns       : natural;
-      variable remainder     : natural;
-    begin
-
-      if frame_type = fecframe_normal then
-        if constellation = mod_8psk then
-          rows := 21_600;
-        elsif constellation = mod_16apsk then
-          rows := 16_200;
-        elsif constellation = mod_32apsk then
-          rows := 12_960;
-        end if;
-      elsif frame_type = fecframe_short then
-        if constellation = mod_8psk then
-          rows := 5_400;
-        elsif constellation = mod_16apsk then
-          rows := 4_050;
-        elsif constellation = mod_32apsk then
-          rows := 3_240;
-        end if;
-      end if;
-
-      if constellation = mod_8psk then
-        columns := 3;
-      elsif constellation = mod_16apsk then
-        columns := 4;
-      elsif constellation = mod_32apsk then
-        columns := 5;
-      end if;
-
-      return (last_row    => to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 1,
-              last_column => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,
-              remainder   => to_unsigned(rows mod DATA_WIDTH, numbits(DATA_WIDTH)));
-
-    end function get_wr_cnt_max_values;
-    -------------------------------------------------------------------------------------
-
-    variable wr_column_cnt_i    : natural range 0 to MAX_COLUMNS - 1;
+    variable bit_cnt_v       : unsigned(bit_cnt'range) := (others => '0');
+    variable wr_column_cnt_i : natural range 0 to MAX_COLUMNS - 1;
+    variable tdata_sr        : std_logic_vector(dbg_tdata_sr'range);
   begin
     if rst = '1' then
-      wr_column_cnt   <= (others => '0');
-      wr_row_cnt      <= (others => '0');
-      wr_remainder    <= (others => '0');
-      wr_ram_ptr      <= (others => '0');
+      wr_column_cnt <= (others => '0');
+      wr_row_cnt    <= (others => '0');
+      wr_remainder  <= (others => '0');
+      wr_ram_ptr    <= (others => '0');
 
-      wr_first_word   <= '1';
-      wr_addr_init    <= '1';
+      bit_cnt       <= (others => '0');
+
+      wr_addr_init  <= '1';
+
       -- FIXME: Revisit this in the future; for some reason GHDL Synth and/or Yosys fail
       -- if we don't add this (see https://github.com/ghdl/ghdl/issues/1136)
-      ram_wr_data     <= (others => (others => 'U'));
+      -- ram_wr_data  <= (others => (others => 'U'));
+
+      for i in ram_wr'range loop
+        ram_wr(i) <= (addr => (others => 'U'),
+                          data => (others => 'U'),
+                          en => '0');
+      end loop;
+
+      dbg_tdata_sr <= (others => 'U');
+      tdata_sr     := (others => 'U');
 
     elsif rising_edge(clk) then
 
       -- Only to reduce footprint of converting to integer when slicing vectors
-      wr_column_cnt_i    := to_integer(wr_column_cnt);
+      wr_column_cnt_i := to_integer(wr_column_cnt);
 
-      --
-      s_axi_dv_reg       <= s_axi_dv;
-      s_tlast_reg        <= s_tlast;
-      s_tdata_reg        <= s_tdata;
-      wr_column_cnt_reg0 <= wr_column_cnt;
-      wr_column_cnt_reg1 <= wr_column_cnt_reg0;
-
-      wr_partial         <= '0';
-      wr_partial_start   <= to_integer(wr_remainder);
-
-      ram_wr_en                    <= (others => '0');
-      ram_wr_data(wr_column_cnt_i) <= wr_data_mux(to_integer(wr_remainder));
+      if s_axi_dv = '1' then
+        tdata_sr      := tdata_sr(tdata_sr'length - DATA_WIDTH - 1 downto 0) & s_tdata;
+        bit_cnt_v     := bit_cnt_v + DATA_WIDTH;
+        s_tlast_reg   <= s_tlast;
+      end if;
 
       -- Increment RAM addr every time it gets written
       for column in 0 to MAX_COLUMNS - 1 loop
-        if ram_wr_en(column) = '1' then
-          ram_wr_addr(column) <= ram_wr_addr(column) + 1;
+        ram_wr(column).en <= '0';
+        if ram_wr(column).en = '1' then
+          ram_wr(column).addr <= ram_wr(column).addr + 1;
         end if;
       end loop;
 
-      -- Data handling will use the delayed AXI data -- can register config safely
-      if s_axi_dv = '1' then
-        wr_first_word  <= s_tlast;
-
-        if wr_first_word = '1' then
-          cfg_wr_cnt           <= get_wr_cnt_max_values(cfg_constellation, cfg_frame_type);
-          cfg_wr_constellation <= cfg_constellation;
-          cfg_wr_frame_type    <= cfg_frame_type;
-          cfg_wr_code_rate     <= cfg_code_rate;
+      if bit_cnt_v >= DATA_WIDTH or s_tlast_reg = '1' then
+        if s_tlast_reg = '1' then
+          s_tlast_reg                      <= '0';
+          ram_wr(wr_column_cnt_i).data <= tdata_sr(to_integer(bit_cnt_v) - 1 downto 0) & (DATA_WIDTH - to_integer(bit_cnt_v) - 1 downto 0 => '0');
+          tdata_sr                         := (others => 'U');
+        else
+          ram_wr(wr_column_cnt_i).data <= tdata_sr(to_integer(bit_cnt_v) - 1 downto to_integer(bit_cnt_v) - DATA_WIDTH);
         end if;
 
-      end if;
-
-      -- Handle incoming AXI data
-      handle_axi_dv_reg : if s_axi_dv_reg = '1' then
-
-        ram_wr_en(wr_column_cnt_i) <= '1';
+        -- wr_partial being set here means that the previous word was the last on a column
+        -- but there was not enough data to start writing the next column.
+        ram_wr(wr_column_cnt_i).en <= '1';
         wr_addr_init               <= '0';
 
         -- Initialize each RAM's initial write address at every first row
         if wr_addr_init = '1' then
-          ram_wr_addr(wr_column_cnt_i) <= wr_ram_ptr & (numbits(MAX_ROWS) - 1 downto 0 => '0');
+          ram_wr(wr_column_cnt_i).addr <= wr_ram_ptr & (numbits(MAX_ROWS) - 1 downto 0 => '0');
         end if;
 
         wr_row : if wr_row_cnt /= cfg_wr_cnt.last_row then
           wr_row_cnt <= wr_row_cnt + 1;
+          bit_cnt_v  := bit_cnt_v - DATA_WIDTH;
         else
           wr_addr_init <= '1';
           wr_row_cnt   <= (others => '0');
           wr_remainder <= wr_remainder + cfg_wr_cnt.remainder;
 
-          -- When the number of rows is not an integer multiple of DATA_WIDTH, we'll need
-          -- track how many bits we have accumulated to extend the column by a full byte.
-          -- Partial values will be written via wr_partial
-          if cfg_wr_cnt.remainder /= 0 then
-            -- The very first column will yield some extra bits (the amount is given by
-            -- cfg_wr_cnt.remainder) and we need to know whenever the *next* column will
-            -- have a full extra word -- hence the 2 * cfg_wr_cnt.remainder here
-            if wr_remainder - (cfg_wr_cnt.remainder & '0') = 0 then
-              wr_row_cnt <= (wr_row_cnt'range => '1');
-            end if;
-
-          end if;
+          bit_cnt_v := bit_cnt_v - cfg_wr_cnt.remainder;
 
           -- Chain counters
           if wr_column_cnt /= cfg_wr_cnt.last_column then
             wr_column_cnt <= wr_column_cnt + 1;
-            wr_partial    <= '1';
           else
-            if cfg_wr_cnt.remainder /= 0 then
-              ram_wr_data(to_integer(wr_column_cnt_reg0)) <= last_word_mux(to_integer(cfg_wr_cnt.remainder));
-            end if;
-
             wr_column_cnt <= (others => '0');
             wr_ram_ptr    <= wr_ram_ptr + 1;
           end if;
 
         end if wr_row;
-
-      end if handle_axi_dv_reg;
-
-      -- Handle writing partial word
-      if wr_partial = '1' then
-        ram_wr_en(to_integer(wr_column_cnt_reg0))   <= '1';
-        ram_wr_data(to_integer(wr_column_cnt_reg0)) <= wr_data_mux(wr_partial_start);
       end if;
+
+      bit_cnt      <= bit_cnt_v;
+      dbg_tdata_sr <= tdata_sr;
 
     end if;
   end process write_side_p;
@@ -640,5 +581,110 @@ begin
 
     end if;
   end process read_side_p;
+
+  cfg_sample_block : block
+  begin
+
+    process(clk, rst)
+    begin
+      if rst = '1' then
+        wr_first_word   <= '1';
+      elsif rising_edge(clk) then
+        -- Data handling will use the delayed AXI data -- can register config safely
+        if s_axi_dv = '1' then
+          wr_first_word  <= s_tlast;
+        end if;
+      end if;
+    end process;
+
+    -- TODO: We're loading the config instantly to get the interleaving done. There should
+    -- be a cycle at least to allow using BRAMs
+    process(s_axi_dv, wr_first_word, cfg_constellation, cfg_frame_type, cfg_code_rate)
+      -------------------------------------------------------------------------------------
+      function get_wr_cnt_max_values (
+        constant constellation : in constellation_t;
+        constant frame_type    : in frame_type_t) return cfg_t is
+        variable rows          : natural;
+        variable columns       : natural;
+        variable remainder     : natural;
+      begin
+
+        if frame_type = fecframe_normal then
+          if constellation = mod_8psk then
+            rows := 21_600;
+          elsif constellation = mod_16apsk then
+            rows := 16_200;
+          elsif constellation = mod_32apsk then
+            rows := 12_960;
+          end if;
+        elsif frame_type = fecframe_short then
+          if constellation = mod_8psk then
+            rows := 5_400;
+          elsif constellation = mod_16apsk then
+            rows := 4_050;
+          elsif constellation = mod_32apsk then
+            rows := 3_240;
+          end if;
+        end if;
+
+        if constellation = mod_8psk then
+          columns := 3;
+        elsif constellation = mod_16apsk then
+          columns := 4;
+        elsif constellation = mod_32apsk then
+          columns := 5;
+        end if;
+
+        return (last_row    => to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 0,
+                last_column => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,
+                remainder   => to_unsigned(rows mod DATA_WIDTH, numbits(DATA_WIDTH)));
+
+      end function get_wr_cnt_max_values;
+    begin
+      if s_axi_dv = '1' and wr_first_word = '1' then
+        cfg_wr_cnt           <= get_wr_cnt_max_values(cfg_constellation, cfg_frame_type);
+        cfg_wr_constellation <= cfg_constellation;
+        cfg_wr_frame_type    <= cfg_frame_type;
+        cfg_wr_code_rate     <= cfg_code_rate;
+      end if;
+    end process;
+
+    process(dbg_tdata_sr)
+    begin
+        for i in 0 to wr_data_mux'length - 1 loop
+
+          wr_data_mux(i) <= dbg_tdata_sr(DATA_WIDTH + i - 1 downto i);
+        end loop;
+    end process;
+
+    process(clk)
+      variable data : std_logic_vector(DATA_WIDTH - 1 downto 0);
+    begin
+      if rising_edge(clk) then
+
+        if s_axi_dv = '1' then
+          -- wr_data_mux(0) <= s_tdata;
+
+          -- Unwrap muxes explicitly, Vivado doesn't seem to understand if we do this on
+          -- the fly. Note that index 0 is data itself and is not assigned within this loop
+          for i in 0 to last_word_mux'length - 1 loop
+
+            data := dbg_tdata_sr(DATA_WIDTH + i - 1 downto i);
+            -- the last word will use the MSB of the actual word
+            last_word_mux(i) <= data(DATA_WIDTH - 1 downto DATA_WIDTH - i) &
+                                (DATA_WIDTH - i - 1 downto 0 => '0');
+          end loop;
+
+          -- for i in 0 to DATA_WIDTH - 1 loop
+          --   last_word_mux(i) <= s_tdata(DATA_WIDTH - 1 downto DATA_WIDTH - i) &
+          --                       (DATA_WIDTH - i - 1 downto 0 => '0');
+          -- end loop;
+
+        end if;
+      end if;
+    end process;
+
+
+  end block;
 
 end axi_bit_interleaver;

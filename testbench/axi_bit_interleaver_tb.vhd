@@ -35,9 +35,18 @@ use str_format.str_format_pkg.all;
 use work.dvb_utils_pkg.all;
 use work.dvb_sim_utils_pkg.all;
 
+library fpga_cores;
+use fpga_cores.common_pkg.all;
+
 library fpga_cores_sim;
 use fpga_cores_sim.testbench_utils_pkg.all;
 use fpga_cores_sim.file_utils_pkg.all;
+
+-- ghdl translate_off
+library modelsim_lib;
+use modelsim_lib.util.all;
+-- ghdl translate_on
+
 
 entity axi_bit_interleaver_tb is
   generic (
@@ -213,7 +222,7 @@ begin
     procedure run_test (
       constant config           : config_t;
       constant number_of_frames : in positive) is
-      variable file_reader_msg  : msg_t;
+      variable msg              : msg_t;
       constant data_path        : string := strip(config.base_path, chars => (1 to 1 => nul));
     begin
 
@@ -224,15 +233,25 @@ begin
       info(" - data path      : " & data_path);
 
       for i in 0 to number_of_frames - 1 loop
-        file_reader_msg := new_msg;
-        file_reader_msg.sender := self;
+        msg        := new_msg;
+        msg.sender := self;
 
-        push(file_reader_msg, data_path & "/bit_interleaver_input.bin");
-        push(file_reader_msg, config.constellation);
-        push(file_reader_msg, config.frame_type);
-        push(file_reader_msg, config.code_rate);
+        push(msg, data_path & "/bit_interleaver_input.bin");
+        push(msg, config.constellation);
+        push(msg, config.frame_type);
+        push(msg, config.code_rate);
 
-        send(net, input_cfg_p, file_reader_msg);
+        send(net, input_cfg_p, msg);
+
+        msg        := new_msg;
+        msg.sender := self;
+
+        push(msg, config.constellation);
+        push(msg, config.frame_type);
+        push(msg, config.code_rate);
+
+        send(net, find("whitebox_monitor_p"), msg);
+
         read_file(
           net,
           file_checker,
@@ -272,7 +291,7 @@ begin
       set_timeout(runner, configs'length * NUMBER_OF_TEST_FRAMES * 4 ms / DATA_WIDTH);
 
       if run("back_to_back") then
-        tvalid_probability <= 1.0;
+        tvalid_probability <= 0.05;
         tready_probability <= 1.0;
 
         for i in configs'range loop
@@ -280,7 +299,7 @@ begin
         end loop;
 
       elsif run("slow_master") then
-        tvalid_probability <= 0.5;
+        tvalid_probability <= 1.0;
         tready_probability <= 1.0;
 
         for i in configs'range loop
@@ -310,8 +329,6 @@ begin
       walk(1);
 
       check_false(has_message(input_cfg_p));
-
-      check_equal(error_cnt, 0);
 
       walk(32);
 
@@ -357,15 +374,290 @@ begin
       cfg_msg.sender := self;
       send(net, main, cfg_msg);
     end if;
-    check_equal(error_cnt, 0);
   end process;
 
   process
   begin
-    wait until rising_edge(clk);
-    if rst = '0' then
-      check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
-    end if;
+    wait until rst = '0';
+    wait until unsigned(error_cnt) /= 0;
+    check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
   end process;
+
+  whitebox_monitor : block
+
+    constant logger : logger_t := get_logger("whitebox_monitor");
+
+    constant whitebox_axi_monitor : actor_t := new_actor("whitebox_monitor_axi_data");
+    constant whitebox_ram_monitor : actor_t := new_actor("whitebox_monitor_ram_data");
+
+    signal frame_cnt : integer := 0;
+      
+    type cfg_t is record
+      row_number    : natural;
+      column_number : natural;
+      remainder     : natural;
+    end record;
+
+    constant RAM_PTR_WIDTH : integer := 2;
+    constant MAX_ROWS      : integer := 21_600 / DATA_WIDTH;
+    constant MAX_COLUMNS   : integer := 5;
+
+    type addr_array_t is array (natural range <>)
+      of unsigned(numbits(MAX_ROWS) + RAM_PTR_WIDTH - 1 downto 0);
+    type data_array_t is array (natural range <>) of std_logic_vector(DATA_WIDTH - 1 downto 0);
+
+    -- signal ram_wr_addr               : addr_array_t(MAX_COLUMNS - 1 downto 0);
+    -- signal ram_wr_data               : data_array_t(MAX_COLUMNS - 1 downto 0);
+    -- signal ram_wr_en                 : std_logic_vector(MAX_COLUMNS - 1 downto 0);
+
+    type ram_wr_t is record
+      addr : unsigned(numbits(MAX_ROWS) + RAM_PTR_WIDTH - 1 downto 0);
+      data : std_logic_vector(DATA_WIDTH - 1 downto 0);
+      en   : std_logic;
+    end record;
+
+    type ram_wr_array_t is array (MAX_COLUMNS - 1 downto 0) of ram_wr_t;
+
+    signal ram_wr   : ram_wr_array_t;
+
+    impure function get_interleaver_config ( constant msg : msg_t ) return cfg_t is
+      variable constellation : constellation_t;
+      variable frame_type    : frame_type_t;
+      variable code_rate     : code_rate_t;
+
+      variable rows          : natural;
+      variable columns       : natural;
+      variable remainder     : natural;
+    begin
+
+      constellation := pop(msg);
+      frame_type    := pop(msg);
+      code_rate     := pop(msg);
+
+      if frame_type = fecframe_normal then
+        if constellation = mod_8psk then
+          rows := 21_600;
+        elsif constellation = mod_16apsk then
+          rows := 16_200;
+        elsif constellation = mod_32apsk then
+          rows := 12_960;
+        end if;
+      elsif frame_type = fecframe_short then
+        if constellation = mod_8psk then
+          rows := 5_400;
+        elsif constellation = mod_16apsk then
+          rows := 4_050;
+        elsif constellation = mod_32apsk then
+          rows := 3_240;
+        end if;
+      end if;
+
+      if constellation = mod_8psk then
+        columns := 3;
+      elsif constellation = mod_16apsk then
+        columns := 4;
+      elsif constellation = mod_32apsk then
+        columns := 5;
+      end if;
+
+      return (row_number    => rows / DATA_WIDTH + 1,
+              column_number => columns,
+              remainder     => rows mod DATA_WIDTH);
+
+    end function get_interleaver_config;
+
+    impure function equal_ignore_x (constant a, b : std_logic_vector) return boolean is
+      variable result : boolean := True;
+    begin
+      assert a'length = b'length;
+      -- if a'length /= b'length then
+      --   return False;
+      -- end if;
+
+      for i in a'range loop
+        if a(i) /= 'U' and b(i) /= 'U' then
+          if a(i) /= b(i) then
+            result := False;
+          end if;
+        end if;
+      end loop;
+
+      if not result then
+        warning(sformat("Comparing %b and %b => %r", fo(a), fo(b), fo(result)));
+      end if;
+
+      return result;
+    end function;
+
+    procedure check_ram_write (
+      signal   net           : inout std_logic;
+      constant cfg           : cfg_t ) is
+      variable msg           : msg_t;
+
+      variable data_sr       : std_logic_vector(2*DATA_WIDTH - 1 downto 0);
+      variable is_last       : boolean := False;
+      variable bit_cnt       : natural := 0;
+
+      variable expected_data : std_logic_vector(DATA_WIDTH - 1 downto 0);
+      variable ram_addr      : unsigned(numbits(MAX_ROWS) - 1 downto 0);
+      variable ram_data      : std_logic_vector(DATA_WIDTH - 1 downto 0);
+      variable offset        : natural := 0;
+    begin
+
+      bit_cnt := 0;
+      for column in 0 to cfg.column_number - 1 loop
+        for row in 0 to cfg.row_number - 1 loop
+
+          -- Receive AXI data if we need more
+          if bit_cnt < DATA_WIDTH and not is_last then
+            receive(net, whitebox_axi_monitor, msg);
+            data_sr := data_sr(data_sr'length - DATA_WIDTH - 1 downto 0) & std_logic_vector'(pop(msg));
+            is_last := pop(msg);
+            bit_cnt := bit_cnt + DATA_WIDTH;
+          end if;
+
+          -- Receive RAM data
+          receive(net, whitebox_ram_monitor, msg);
+          -- We're not comparing pointers
+          ram_addr := pop(msg)(numbits(MAX_ROWS) - 1 downto 0);
+          ram_data := pop(msg);
+
+          -- For the last row we'll only compare the relevant bits
+          if row = cfg.row_number - 1 then
+            expected_data := data_sr(bit_cnt - 1 downto bit_cnt - cfg.remainder)
+                             & (DATA_WIDTH - 1 downto cfg.remainder => 'U');
+          else
+            expected_data := data_sr(bit_cnt - 1 downto bit_cnt - DATA_WIDTH);
+          end if;
+
+          info(
+            logger,
+            sformat(
+              "[frame=%d, column=%d, row=%3d] " &
+              "is_last=%r, offset=%d || bit_cnt=%2d || data_sr = %r (%b)  ||  " &
+              "expected_data = %r (%b)",
+              fo(frame_cnt),
+              fo(column),
+              fo(row),
+              fo(is_last),
+              fo(offset),
+              fo(bit_cnt),
+              fo(data_sr),
+              fo(data_sr),
+              fo(expected_data),
+              fo(expected_data)));
+
+          -- if row /= ram_addr or expected_data /= ram_data then
+          if row /= ram_addr or not equal_ignore_x(expected_data, ram_data) then
+            if row /= cfg.row_number - 1 then
+              error(
+                logger,
+                sformat(
+                  "[frame=%d, column=%d, row=%3d] Expected addr: %r / %d, data: %r, got addr=%r, data=%r",
+                  fo(frame_cnt),
+                  fo(column),
+                  fo(row),
+                  fo(to_unsigned(row, numbits(MAX_ROWS))),
+                  fo(row),
+                  fo(expected_data),
+                  fo(ram_addr),
+                  fo(ram_data)));
+            else
+              error(
+                logger,
+                sformat(
+                  "[frame=%d, column=%d, row=%3d] Expected addr: %r / %d, data: %r, got addr=%r, data=%r",
+                  fo(frame_cnt),
+                  fo(column),
+                  fo(row),
+                  fo(to_unsigned(row, numbits(MAX_ROWS))),
+                  fo(row),
+                  fo(expected_data),
+                  fo(ram_addr),
+                  fo(ram_data)));
+            end if;
+          end if;
+
+          if row = cfg.row_number - 1 then
+            offset  := offset + cfg.remainder;
+            bit_cnt := bit_cnt - cfg.remainder;
+            data_sr := (data_sr'length - bit_cnt - 1 downto 0 => 'U') & data_sr(bit_cnt - 1 downto 0);
+          else
+            bit_cnt := bit_cnt - DATA_WIDTH;
+          end if;
+        end loop;
+      end loop;
+
+      assert is_last;
+
+      warning("Exiting check loop");
+
+    end;
+
+  begin
+    process
+      constant self : actor_t := new_actor("whitebox_monitor_p");
+      constant main : actor_t := find("main");
+      variable msg  : msg_t;
+      variable cfg  : cfg_t;
+    begin
+
+      init_signal_spy("../../dut/ram_wr", "ram_wr", 1);
+
+      while True loop
+        receive(net, self, msg);
+        cfg := get_interleaver_config(msg);
+        check_ram_write(net, cfg);
+        frame_cnt <= frame_cnt + 1;
+      end loop;
+      wait;
+    end process;
+
+    queue_axi_data_p : process
+      constant logger    : logger_t := get_logger("queue_axi_data_p");
+      variable msg       : msg_t;
+      variable frame_cnt : natural := 0;
+      variable word_cnt  : natural := 0;
+    begin
+      wait until m_tvalid = '1' and m_tready = '1' and rising_edge(clk);
+      msg := new_msg;
+      push(msg, m_tdata);
+      if m_tlast = '1' then
+        push(msg, True);
+      else
+        push(msg, False);
+      end if;
+      debug(logger, sformat("[frame=%d, word=%d] tdata=%r", fo(frame_cnt), fo(word_cnt), fo(m_tdata)));
+      send(net, find("whitebox_monitor_axi_data"), msg);
+      word_cnt := word_cnt + 1;
+      if m_tlast = '1' then
+        word_cnt := 0;
+        frame_cnt := frame_cnt + 1;
+      end if;
+    end process;
+
+    queue_ram_data_p : process
+      variable msg     : msg_t;
+      variable sampled : boolean;
+      variable cnt     : natural      := 0;
+    begin
+      wait until rising_edge(clk);
+      sampled := False;
+
+      for column in 0 to MAX_COLUMNS - 1 loop
+        -- Sample RAM wr data
+        if ram_wr(column).en = '1' then
+          assert not sampled;
+          sampled := True;
+
+          msg := new_msg;
+          push(msg, ram_wr(column).addr);
+          push(msg, ram_wr(column).data);
+          send(net, find("whitebox_monitor_ram_data"), msg);
+        end if;
+      end loop;
+    end process;
+
+  end block whitebox_monitor;
 
 end axi_bit_interleaver_tb;
