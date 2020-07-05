@@ -30,6 +30,13 @@ use fpga_cores.common_pkg.all;
 
 use work.dvb_utils_pkg.all;
 
+library vunit_lib;
+context vunit_lib.vunit_context;
+context vunit_lib.com_context;
+
+library str_format;
+use str_format.str_format_pkg.all;
+
 ------------------------
 -- Entity declaration --
 ------------------------
@@ -80,6 +87,7 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   -- Signals --
   -------------
   signal s_tready_i                : std_logic;
+  signal handler_ready             : std_logic;
 
   signal s_axi_dv                  : std_logic;
   signal s_tlast_reg               : std_logic;
@@ -95,7 +103,8 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal cfg_wr_frame_type         : frame_type_t;
   signal cfg_wr_code_rate          : code_rate_t;
   signal cfg_wr_cnt                : cfg_t;
-  signal cfg_wr_en                 : std_logic;
+  signal cfg_fifo_wren             : std_logic;
+  signal cfg_fifo_full             : std_logic;
   -- Write side counters
   signal bit_cnt                   : unsigned(2*numbits(DATA_WIDTH) - 1 downto 0);
   signal wr_row_cnt                : unsigned(numbits(MAX_ROWS) - 1 downto 0);
@@ -125,7 +134,8 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal cfg_fifo_rd_constellation : constellation_t;
   signal cfg_fifo_rd_frame_rate    : frame_type_t;
   signal cfg_fifo_rd_code_rate     : code_rate_t;
-  signal cfg_fifo_rd_en            : std_logic;
+  signal cfg_fifo_rden             : std_logic;
+  signal cfg_fifo_empty            : std_logic;
 
   signal cfg_rd_constellation      : constellation_t;
   signal cfg_rd_frame_type         : frame_type_t;
@@ -231,7 +241,7 @@ begin
       din     => wr_first_word,
       -- Edges detected
       rising  => open,
-      falling => cfg_wr_en,
+      falling => cfg_fifo_wren,
       toggle  => open);
 
   rd_en_gen: entity fpga_cores.edge_detector
@@ -246,7 +256,7 @@ begin
       din     => rd_first_word,
       -- Edges detected
       rising  => open,
-      falling => cfg_fifo_rd_en,
+      falling => cfg_fifo_rden,
       toggle  => open);
 
   -- Write and read side might be on different timings, use a small FIFO to pass config
@@ -259,14 +269,14 @@ begin
       rst     => rst,
 
       -- Write side
-      wr_en           => cfg_wr_en,
-      full            => open,
+      wr_en           => cfg_fifo_wren,
+      full            => cfg_fifo_full,
       constellation_i => cfg_wr_constellation,
       frame_type_i    => cfg_wr_frame_type,
       code_rate_i     => cfg_wr_code_rate,
 
-      rd_en           => cfg_fifo_rd_en,
-      empty           => open,
+      rd_en           => cfg_fifo_rden,
+      empty           => cfg_fifo_empty,
       constellation_o => cfg_fifo_rd_constellation,
       frame_type_o    => cfg_fifo_rd_frame_rate,
       code_rate_o     => cfg_fifo_rd_code_rate);
@@ -307,7 +317,8 @@ begin
   ram_ptr_diff    <= wr_ram_ptr - rd_ram_ptr when wr_ram_ptr > rd_ram_ptr else
                      2**RAM_PTR_WIDTH + wr_ram_ptr - rd_ram_ptr;
 
-  s_tready_i      <= '1' when ram_ptr_diff < 2 else '0';
+  -- s_tready_i      <= handler_ready when ram_ptr_diff < 2 else '0';
+  s_tready_i      <= handler_ready and not cfg_fifo_full;
 
   s_axi_dv        <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
 
@@ -335,6 +346,7 @@ begin
 
       bit_cnt       <= (others => '0');
 
+      handler_ready <= '1';
       wr_addr_init  <= '1';
 
       -- FIXME: Revisit this in the future; for some reason GHDL Synth and/or Yosys fail
@@ -352,6 +364,8 @@ begin
 
     elsif rising_edge(clk) then
 
+      handler_ready <= '1';
+
       -- Only to reduce footprint of converting to integer when slicing vectors
       wr_column_cnt_i := to_integer(wr_column_cnt);
 
@@ -359,6 +373,9 @@ begin
         tdata_sr      := tdata_sr(tdata_sr'length - DATA_WIDTH - 1 downto 0) & s_tdata;
         bit_cnt_v     := bit_cnt_v + DATA_WIDTH;
         s_tlast_reg   <= s_tlast;
+        if s_tlast = '1' then
+          handler_ready <= '0';
+        end if;
       end if;
 
       -- Increment RAM addr every time it gets written
@@ -369,19 +386,32 @@ begin
         end if;
       end loop;
 
-      if bit_cnt_v >= DATA_WIDTH or s_tlast_reg = '1' then
-        if s_tlast_reg = '1' then
-          s_tlast_reg                      <= '0';
-          ram_wr(wr_column_cnt_i).data <= tdata_sr(to_integer(bit_cnt_v) - 1 downto 0) & (DATA_WIDTH - to_integer(bit_cnt_v) - 1 downto 0 => '0');
-          tdata_sr                         := (others => 'U');
-        else
-          ram_wr(wr_column_cnt_i).data <= tdata_sr(to_integer(bit_cnt_v) - 1 downto to_integer(bit_cnt_v) - DATA_WIDTH);
-        end if;
+      if s_tlast_reg = '1' then
 
-        -- wr_partial being set here means that the previous word was the last on a column
-        -- but there was not enough data to start writing the next column.
-        ram_wr(wr_column_cnt_i).en <= '1';
-        wr_addr_init               <= '0';
+        debug(
+          sformat(
+            "ram_wr(%d).data <= tdata_sr(%d downto 0) & (%d downto 0 => '0');",
+            fo(wr_column_cnt_i),
+            fo(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1),
+            fo(to_integer(DATA_WIDTH - minimum(bit_cnt_v, DATA_WIDTH) - 1))
+          )
+        );
+
+
+        s_tlast_reg                  <= '0';
+        ram_wr(wr_column_cnt_i).en   <= '1';
+        ram_wr(wr_column_cnt_i).data <= tdata_sr(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0) & (DATA_WIDTH - minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0 => '0');
+        tdata_sr                     := (others => 'U');
+        bit_cnt_v                    := (others => '0');
+        wr_column_cnt                <= (others => '0');
+        wr_row_cnt                   <= (others => '0');
+        wr_ram_ptr                   <= wr_ram_ptr + 1;
+        wr_addr_init                 <= '1';
+      elsif bit_cnt_v >= DATA_WIDTH then
+
+        ram_wr(wr_column_cnt_i).en   <= '1';
+        ram_wr(wr_column_cnt_i).data <= tdata_sr(to_integer(bit_cnt_v) - 1 downto to_integer(bit_cnt_v) - DATA_WIDTH);
+        wr_addr_init                 <= '0';
 
         -- Initialize each RAM's initial write address at every first row
         if wr_addr_init = '1' then
@@ -399,14 +429,24 @@ begin
           bit_cnt_v := bit_cnt_v - cfg_wr_cnt.remainder;
 
           -- Chain counters
-          if wr_column_cnt /= cfg_wr_cnt.last_column then
-            wr_column_cnt <= wr_column_cnt + 1;
-          else
+          if wr_column_cnt = cfg_wr_cnt.last_column then
             wr_column_cnt <= (others => '0');
             wr_ram_ptr    <= wr_ram_ptr + 1;
+          else
+            wr_column_cnt <= wr_column_cnt + 1;
           end if;
 
+          -- if s_tlast_reg = '1' then
+          --   error(sformat("bit_cnt_v=%d", fo(bit_cnt_v)));
+          --   bit_cnt_v     := (others => '0');
+          -- end if;
+
         end if wr_row;
+
+        if bit_cnt_v >= DATA_WIDTH then
+          handler_ready <= '0';
+        end if;
+
       end if;
 
       bit_cnt      <= bit_cnt_v;
