@@ -30,12 +30,12 @@ use fpga_cores.common_pkg.all;
 
 use work.dvb_utils_pkg.all;
 
-library vunit_lib;
-context vunit_lib.vunit_context;
-context vunit_lib.com_context;
+-- library vunit_lib;
+-- context vunit_lib.vunit_context;
+-- context vunit_lib.com_context;
 
-library str_format;
-use str_format.str_format_pkg.all;
+-- library str_format;
+-- use str_format.str_format_pkg.all;
 
 ------------------------
 -- Entity declaration --
@@ -131,11 +131,14 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal dbg_tdata_sr : std_logic_vector(3*DATA_WIDTH - 1 downto 0);
 
   -- Read side config
+  signal reading_frame             : std_logic;
   signal cfg_fifo_rd_constellation : constellation_t;
   signal cfg_fifo_rd_frame_rate    : frame_type_t;
   signal cfg_fifo_rd_code_rate     : code_rate_t;
   signal cfg_fifo_rden             : std_logic;
   signal cfg_fifo_empty            : std_logic;
+
+  signal rd_ready                  : std_logic;
 
   signal cfg_rd_constellation      : constellation_t;
   signal cfg_rd_frame_type         : frame_type_t;
@@ -228,36 +231,36 @@ begin
       m_tdata  => m_tdata,
       m_tlast  => m_tlast);
 
-  -- First word samples config, whenever it's deasserted we can write the config
-  wr_en_gen: entity fpga_cores.edge_detector
-    generic map (
-      SYNCHRONIZE_INPUT => False,
-      OUTPUT_DELAY      => 0)
-    port map (
-      -- Usual ports
-      clk     => clk,
-      clken   => '1',
-      --
-      din     => wr_first_word,
-      -- Edges detected
-      rising  => open,
-      falling => cfg_fifo_wren,
-      toggle  => open);
+  -- -- First word samples config, whenever it's deasserted we can write the config
+  -- wr_en_gen: entity fpga_cores.edge_detector
+  --   generic map (
+  --     SYNCHRONIZE_INPUT => False,
+  --     OUTPUT_DELAY      => 0)
+  --   port map (
+  --     -- Usual ports
+  --     clk     => clk,
+  --     clken   => '1',
+  --     --
+  --     din     => wr_first_word,
+  --     -- Edges detected
+  --     rising  => open,
+  --     falling => cfg_fifo_wren,
+  --     toggle  => open);
 
-  rd_en_gen: entity fpga_cores.edge_detector
-    generic map (
-      SYNCHRONIZE_INPUT => False,
-      OUTPUT_DELAY      => 0)
-    port map (
-      -- Usual ports
-      clk     => clk,
-      clken   => '1',
-      --
-      din     => rd_first_word,
-      -- Edges detected
-      rising  => open,
-      falling => cfg_fifo_rden,
-      toggle  => open);
+  -- rd_en_gen: entity fpga_cores.edge_detector
+  --   generic map (
+  --     SYNCHRONIZE_INPUT => False,
+  --     OUTPUT_DELAY      => 0)
+  --   port map (
+  --     -- Usual ports
+  --     clk     => clk,
+  --     clken   => '1',
+  --     --
+  --     din     => rd_first_word,
+  --     -- Edges detected
+  --     rising  => open,
+  --     falling => cfg_fifo_rden,
+  --     toggle  => open);
 
   -- Write and read side might be on different timings, use a small FIFO to pass config
   -- across
@@ -284,6 +287,9 @@ begin
   ------------------------------
   -- Asynchronous assignments --
   ------------------------------
+  cfg_fifo_wren <= s_axi_dv and s_tlast;
+  cfg_fifo_rden <= rd_ready and not cfg_fifo_empty;
+
   m_wr_data <= mirror_bits(rd_data_sr(DATA_WIDTH - 1 downto 0));
 
   -- Assign the interleaved data statically
@@ -322,11 +328,6 @@ begin
 
   s_axi_dv        <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
 
-  -- Pack addr/data/en just for visualizing in the waveform
-  -- g_dbg_ram_wr : for i in 0 to MAX_COLUMNS - 1 generate
-  --   ram_wr(i) <= (addr => ram_wr_addr(i), data => ram_wr_data(i), en => ram_wr_en(i));
-  -- end generate;
-
   -- Assign internals
   s_tready        <= s_tready_i;
 
@@ -349,14 +350,10 @@ begin
       handler_ready <= '1';
       wr_addr_init  <= '1';
 
-      -- FIXME: Revisit this in the future; for some reason GHDL Synth and/or Yosys fail
-      -- if we don't add this (see https://github.com/ghdl/ghdl/issues/1136)
-      -- ram_wr_data  <= (others => (others => 'U'));
-
       for i in ram_wr'range loop
         ram_wr(i) <= (addr => (others => 'U'),
-                          data => (others => 'U'),
-                          en => '0');
+                      data => (others => 'U'),
+                      en => '0');
       end loop;
 
       dbg_tdata_sr <= (others => 'U');
@@ -388,14 +385,14 @@ begin
 
       if s_tlast_reg = '1' then
 
-        debug(
-          sformat(
-            "ram_wr(%d).data <= tdata_sr(%d downto 0) & (%d downto 0 => '0');",
-            fo(wr_column_cnt_i),
-            fo(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1),
-            fo(to_integer(DATA_WIDTH - minimum(bit_cnt_v, DATA_WIDTH) - 1))
-          )
-        );
+        -- debug(
+        --   sformat(
+        --     "ram_wr(%d).data <= tdata_sr(%d downto 0) & (%d downto 0 => '0');",
+        --     fo(wr_column_cnt_i),
+        --     fo(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1),
+        --     fo(to_integer(DATA_WIDTH - minimum(bit_cnt_v, DATA_WIDTH) - 1))
+        --   )
+        -- );
 
 
         s_tlast_reg                  <= '0';
@@ -522,11 +519,13 @@ begin
       ram_rd_addr   <= (others => '0');
 
       rd_first_word <= '1';
+      rd_ready      <= '1';
+      reading_frame <= '0';
 
     elsif clk'event and clk = '1' then
 
-      m_wr_en   <= '0';
-      m_wr_last <= '0';
+      m_wr_en           <= '0';
+      m_wr_last         <= '0';
 
       -- Data comes out of the RAMs 1 cycle after the address has changed, need to keep
       -- track of the actual value being handled
@@ -534,18 +533,21 @@ begin
       m_wr_en_reg       <= m_wr_en;
       m_wr_last_reg     <= m_wr_last;
 
-      if rd_first_word = '1' then
-        cfg_rd_cnt <= get_rd_cnt_max_values(cfg_fifo_rd_constellation, cfg_fifo_rd_frame_rate);
+      -- Sample data at the FIFO's output when reading from it
+      -- TODO: might be better if the write side passes the decoded parameters so we don't
+      -- need to convert them into limits for the row and column counters
+      if cfg_fifo_rden = '1' then
+        rd_ready             <= '0';
+        reading_frame        <= '1';
+        cfg_rd_cnt           <= get_rd_cnt_max_values(cfg_fifo_rd_constellation, cfg_fifo_rd_frame_rate);
 
-        -- Sample data form the config FIFO whenever we read from it
         cfg_rd_constellation <= cfg_fifo_rd_constellation;
         cfg_rd_frame_type    <= cfg_fifo_rd_frame_rate;
         cfg_rd_code_rate     <= cfg_fifo_rd_code_rate;
-
       end if;
 
-      -- If pointers are different and the AXI adapter has space, keep writing
-      if m_wr_full = '0' and rd_ram_ptr /= wr_ram_ptr then
+      -- Write to the AXI adapter whenever it's not full
+      if m_wr_full = '0' and reading_frame = '1' then
 
         rd_first_word <= '0';
         m_wr_en       <= '1';
@@ -565,6 +567,9 @@ begin
             m_wr_last     <= '1';
             ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
             rd_first_word <= '1';
+
+            rd_ready      <= '1';
+            reading_frame <= '0';
           end if;
         end if;
 
@@ -575,6 +580,9 @@ begin
           m_wr_last     <= '1';
           ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
           rd_first_word <= '1';
+
+          rd_ready      <= '1';
+          reading_frame <= '0';
         end if;
 
       end if;
@@ -674,6 +682,7 @@ begin
         elsif constellation = mod_32apsk then
           columns := 5;
         end if;
+
 
         return (last_row    => to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 0,
                 last_column => to_unsigned(columns, numbits(MAX_COLUMNS)) - 1,

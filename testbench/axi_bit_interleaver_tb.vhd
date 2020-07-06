@@ -18,6 +18,8 @@
 -- You should have received a copy of the GNU General Public License
 -- along with DVB FPGA.  If not, see <http://www.gnu.org/licenses/>.
 
+-- vunit: run_all_in_same_sim
+
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -61,12 +63,14 @@ architecture axi_bit_interleaver_tb of axi_bit_interleaver_tb is
   ---------------
   -- Constants --
   ---------------
-  constant configs               : config_array_t := get_test_cfg(TEST_CFG);
+  constant configs                    : config_array_t := get_test_cfg(TEST_CFG);
 
-  constant FILE_READER_NAME      : string := "file_reader";
-  constant FILE_CHECKER_NAME     : string := "file_checker";
-  constant CLK_PERIOD            : time := 5 ns;
-  constant ERROR_CNT_WIDTH       : integer := 8;
+  constant FILE_READER_NAME           : string := "file_reader";
+  constant FILE_CHECKER_NAME          : string := "file_checker";
+  constant CLK_PERIOD                 : time := 5 ns;
+  constant ERROR_CNT_WIDTH            : integer := 8;
+
+  constant DBG_CHECK_FRAME_RAM_WRITES : boolean := False;
 
   function get_checker_data_ratio ( constant constellation : in constellation_t)
   return string is
@@ -243,14 +247,16 @@ begin
 
         send(net, input_cfg_p, msg);
 
-        msg        := new_msg;
-        msg.sender := self;
+        if DBG_CHECK_FRAME_RAM_WRITES then
+          msg        := new_msg;
+          msg.sender := self;
 
-        push(msg, config.constellation);
-        push(msg, config.frame_type);
-        push(msg, config.code_rate);
+          push(msg, config.constellation);
+          push(msg, config.frame_type);
+          push(msg, config.code_rate);
 
-        send(net, find("whitebox_monitor_p"), msg);
+          send(net, find("whitebox_monitor_p"), msg);
+        end if;
 
         read_file(
           net,
@@ -266,10 +272,13 @@ begin
     procedure wait_for_completion is -- {{ ---------------------------------------------
       variable msg : msg_t;
     begin
+      info("Waiting for completion");
       receive(net, self, msg);
       wait_all_read(net, file_checker);
 
-      wait until rising_edge(clk) and s_tvalid = '0' for 1 ms;
+      wait until rising_edge(clk) and s_tvalid = '0' for 100 us;
+
+      check_equal(s_tvalid, '0', "s_tvalid should be low after the test");
 
       walk(1);
     end procedure wait_for_completion; -- }} -------------------------------------------
@@ -291,7 +300,7 @@ begin
       set_timeout(runner, configs'length * NUMBER_OF_TEST_FRAMES * 4 ms / DATA_WIDTH);
 
       if run("back_to_back") then
-        tvalid_probability <= 0.05;
+        tvalid_probability <= 1.0;
         tready_probability <= 1.0;
 
         for i in configs'range loop
@@ -299,7 +308,7 @@ begin
         end loop;
 
       elsif run("slow_master") then
-        tvalid_probability <= 1.0;
+        tvalid_probability <= 0.1;
         tready_probability <= 1.0;
 
         for i in configs'range loop
@@ -339,6 +348,7 @@ begin
   end process;
 
   input_cfg_p : process
+    constant logger      : logger_t := get_logger("input_cfg_p");
     constant self        : actor_t := new_actor("input_cfg_p");
     constant main        : actor_t := find("main");
     variable cfg_msg     : msg_t;
@@ -372,6 +382,7 @@ begin
       cfg_msg := new_msg;
       push(cfg_msg, True);
       cfg_msg.sender := self;
+      debug(logger, "Notifying main process that there is no more data");
       send(net, main, cfg_msg);
     end if;
   end process;
@@ -383,7 +394,7 @@ begin
     check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
   end process;
 
-  whitebox_monitor : block
+  whitebox_monitor : if DBG_CHECK_FRAME_RAM_WRITES generate
 
     constant logger : logger_t := get_logger("whitebox_monitor");
 
@@ -391,7 +402,7 @@ begin
     constant whitebox_ram_monitor : actor_t := new_actor("whitebox_monitor_ram_data");
 
     signal frame_cnt : integer := 0;
-      
+
     type cfg_t is record
       row_number    : natural;
       column_number : natural;
@@ -616,8 +627,8 @@ begin
     queue_axi_data_p : process
       constant logger    : logger_t := get_logger("queue_axi_data_p");
       variable msg       : msg_t;
-      variable frame_cnt : natural := 0;
-      variable word_cnt  : natural := 0;
+      variable frame_cnt : natural  := 0;
+      variable word_cnt  : natural  := 0;
     begin
       wait until m_tvalid = '1' and m_tready = '1' and rising_edge(clk);
       msg := new_msg;
@@ -639,7 +650,7 @@ begin
     queue_ram_data_p : process
       variable msg     : msg_t;
       variable sampled : boolean;
-      variable cnt     : natural      := 0;
+      variable cnt     : natural := 0;
     begin
       wait until rising_edge(clk);
       sampled := False;
@@ -658,6 +669,6 @@ begin
       end loop;
     end process;
 
-  end block whitebox_monitor;
+  end generate whitebox_monitor;
 
 end axi_bit_interleaver_tb;
