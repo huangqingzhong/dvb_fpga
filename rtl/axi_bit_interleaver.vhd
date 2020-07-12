@@ -105,6 +105,7 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   signal cfg_wr_cnt                : cfg_t;
   signal cfg_fifo_wren             : std_logic;
   signal cfg_fifo_full             : std_logic;
+  signal cfg_fifo_upper            : std_logic;
   -- Write side counters
   signal bit_cnt                   : unsigned(2*numbits(DATA_WIDTH) - 1 downto 0);
   signal wr_row_cnt                : unsigned(numbits(MAX_ROWS) - 1 downto 0);
@@ -132,19 +133,24 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
 
   -- Read side config
   signal reading_frame             : std_logic;
-  signal cfg_fifo_rd_constellation : constellation_t;
-  signal cfg_fifo_rd_frame_rate    : frame_type_t;
-  signal cfg_fifo_rd_code_rate     : code_rate_t;
-  signal cfg_fifo_rden             : std_logic;
-  signal cfg_fifo_empty            : std_logic;
 
-  signal rd_ready                  : std_logic;
+  signal cfg_fifo_rd_constellation : constellation_t;
+  signal cfg_fifo_rd_frame_type    : frame_type_t;
+  signal cfg_fifo_rd_code_rate     : code_rate_t;
+  signal cfg_fifo_rd_last_row      : unsigned(numbits(MAX_ROWS) - 1 downto 0);
+  signal cfg_fifo_rd_last_column   : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
+  signal cfg_fifo_rd_remainder     : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
+  signal cfg_fifo_rden             : std_logic;
+  signal cfg_fifo_rddv             : std_logic;
+  signal cfg_fifo_empty            : std_logic;
 
   signal cfg_rd_constellation      : constellation_t;
   signal cfg_rd_frame_type         : frame_type_t;
   signal cfg_rd_code_rate          : code_rate_t;
+  signal cfg_rd_last_row           : unsigned(numbits(MAX_ROWS) - 1 downto 0);
+  signal cfg_rd_last_column        : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
+  signal cfg_rd_remainder          : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
 
-  signal cfg_rd_cnt                : cfg_t;
   signal rd_row_cnt                : unsigned(numbits(MAX_ROWS) - 1 downto 0);
 
   signal rd_column_cnt             : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
@@ -231,64 +237,73 @@ begin
       m_tdata  => m_tdata,
       m_tlast  => m_tlast);
 
-  -- -- First word samples config, whenever it's deasserted we can write the config
-  -- wr_en_gen: entity fpga_cores.edge_detector
-  --   generic map (
-  --     SYNCHRONIZE_INPUT => False,
-  --     OUTPUT_DELAY      => 0)
-  --   port map (
-  --     -- Usual ports
-  --     clk     => clk,
-  --     clken   => '1',
-  --     --
-  --     din     => wr_first_word,
-  --     -- Edges detected
-  --     rising  => open,
-  --     falling => cfg_fifo_wren,
-  --     toggle  => open);
+  -- Write and read side might be on different timings, decouple both sides with a FIFO to
+  -- pass both the config parameters and the number of rows and columns
+  cfg_fifo_block : block
+    constant FIELD_WIDTHS : integer_vector_t := (
+      0 => FRAME_TYPE_WIDTH,
+      1 => CONSTELLATION_WIDTH,
+      2 => CODE_RATE_WIDTH,
+      3 => numbits(DATA_WIDTH),  -- remainder
+      4 => numbits(MAX_COLUMNS), -- last column
+      5 => numbits(MAX_ROWS)     -- last row
+    );
 
-  -- rd_en_gen: entity fpga_cores.edge_detector
-  --   generic map (
-  --     SYNCHRONIZE_INPUT => False,
-  --     OUTPUT_DELAY      => 0)
-  --   port map (
-  --     -- Usual ports
-  --     clk     => clk,
-  --     clken   => '1',
-  --     --
-  --     din     => rd_first_word,
-  --     -- Edges detected
-  --     rising  => open,
-  --     falling => cfg_fifo_rden,
-  --     toggle  => open);
+    constant CFG_FIFO_DATA_WIDTH : integer := sum(FIELD_WIDTHS);
 
-  -- Write and read side might be on different timings, use a small FIFO to pass config
-  -- across
-  cfg_fifo_u: entity work.config_fifo
-    generic map ( FIFO_DEPTH => 2 )
-    port map (
-      -- Usual ports
-      clk     => clk,
-      rst     => rst,
+    signal wr_data : std_logic_vector(CFG_FIFO_DATA_WIDTH - 1 downto 0);
+    signal rd_data : std_logic_vector(CFG_FIFO_DATA_WIDTH - 1 downto 0);
 
-      -- Write side
-      wr_en           => cfg_fifo_wren,
-      full            => cfg_fifo_full,
-      constellation_i => cfg_wr_constellation,
-      frame_type_i    => cfg_wr_frame_type,
-      code_rate_i     => cfg_wr_code_rate,
+  begin
 
-      rd_en           => cfg_fifo_rden,
-      empty           => cfg_fifo_empty,
-      constellation_o => cfg_fifo_rd_constellation,
-      frame_type_o    => cfg_fifo_rd_frame_rate,
-      code_rate_o     => cfg_fifo_rd_code_rate);
+    wr_data <= std_logic_vector(cfg_wr_cnt.last_row) &
+               std_logic_vector(cfg_wr_cnt.last_column) &
+               std_logic_vector(cfg_wr_cnt.remainder) &
+               encode(cfg_wr_code_rate) &
+               encode(cfg_wr_constellation) &
+               encode(cfg_wr_frame_type);
+
+    cfg_fifo_rd_last_row      <= unsigned(get_field(5, rd_data, FIELD_WIDTHS));
+    cfg_fifo_rd_last_column   <= unsigned(get_field(4, rd_data, FIELD_WIDTHS));
+    cfg_fifo_rd_remainder     <= unsigned(get_field(3, rd_data, FIELD_WIDTHS));
+
+    cfg_fifo_rd_code_rate     <= decode(get_field(2, rd_data, FIELD_WIDTHS));
+    cfg_fifo_rd_constellation <= decode(get_field(1, rd_data, FIELD_WIDTHS));
+    cfg_fifo_rd_frame_type    <= decode(get_field(0, rd_data, FIELD_WIDTHS));
+
+    cfg_fifo_u : entity fpga_cores.sync_fifo
+      generic map (
+        -- FIFO configuration
+        RAM_TYPE       => "auto",
+        DEPTH          => 2,
+        DATA_WIDTH     => CFG_FIFO_DATA_WIDTH,
+        UPPER_TRESHOLD => 1,
+        LOWER_TRESHOLD => 0)
+      port map (
+        -- Write port
+        clk      => clk,
+        clken    => '1',
+        rst      => rst,
+
+        -- Status
+        full     => cfg_fifo_full,
+        upper    => cfg_fifo_upper,
+        lower    => open,
+        empty    => cfg_fifo_empty,
+
+        wr_en    => cfg_fifo_wren,
+        wr_data  => wr_data,
+
+        -- Read port
+        rd_en    => cfg_fifo_rden,
+        rd_data  => rd_data,
+        rd_dv    => cfg_fifo_rddv);
+    end block;
 
   ------------------------------
   -- Asynchronous assignments --
   ------------------------------
   cfg_fifo_wren <= s_axi_dv and s_tlast;
-  cfg_fifo_rden <= rd_ready and not cfg_fifo_empty;
 
   m_wr_data <= mirror_bits(rd_data_sr(DATA_WIDTH - 1 downto 0));
 
@@ -323,7 +338,6 @@ begin
   ram_ptr_diff    <= wr_ram_ptr - rd_ram_ptr when wr_ram_ptr > rd_ram_ptr else
                      2**RAM_PTR_WIDTH + wr_ram_ptr - rd_ram_ptr;
 
-  -- s_tready_i      <= handler_ready when ram_ptr_diff < 2 else '0';
   s_tready_i      <= handler_ready and not cfg_fifo_full;
 
   s_axi_dv        <= '1' when s_tready_i = '1' and s_tvalid = '1' else '0';
@@ -519,7 +533,7 @@ begin
       ram_rd_addr   <= (others => '0');
 
       rd_first_word <= '1';
-      rd_ready      <= '1';
+      cfg_fifo_rden <= '1';
       reading_frame <= '0';
 
     elsif clk'event and clk = '1' then
@@ -534,15 +548,20 @@ begin
       m_wr_last_reg     <= m_wr_last;
 
       -- Sample data at the FIFO's output when reading from it
-      -- TODO: might be better if the write side passes the decoded parameters so we don't
-      -- need to convert them into limits for the row and column counters
-      if cfg_fifo_rden = '1' then
-        rd_ready             <= '0';
+      if cfg_fifo_rddv = '1' then
+        cfg_fifo_rden        <= '0';
         reading_frame        <= '1';
-        cfg_rd_cnt           <= get_rd_cnt_max_values(cfg_fifo_rd_constellation, cfg_fifo_rd_frame_rate);
+
+        if cfg_fifo_rd_remainder = 0 then
+          cfg_rd_last_row    <= cfg_fifo_rd_last_row - 1;
+        else
+          cfg_rd_last_row    <= cfg_fifo_rd_last_row;
+        end if;
+        cfg_rd_last_column   <= cfg_fifo_rd_last_column;
+        cfg_rd_remainder     <= cfg_fifo_rd_remainder;
 
         cfg_rd_constellation <= cfg_fifo_rd_constellation;
-        cfg_rd_frame_type    <= cfg_fifo_rd_frame_rate;
+        cfg_rd_frame_type    <= cfg_fifo_rd_frame_type;
         cfg_rd_code_rate     <= cfg_fifo_rd_code_rate;
       end if;
 
@@ -553,12 +572,12 @@ begin
         m_wr_en       <= '1';
 
         -- Read pointers control logic
-        if rd_column_cnt /= cfg_rd_cnt.last_column then
+        if rd_column_cnt /= cfg_rd_last_column then
           rd_column_cnt <= rd_column_cnt + 1;
         else
           rd_column_cnt <= (others => '0');
 
-          if rd_row_cnt /= cfg_rd_cnt.last_row then
+          if rd_row_cnt /= cfg_rd_last_row then
             rd_row_cnt  <= rd_row_cnt + 1;
             ram_rd_addr <= ram_rd_addr + 1;
           else
@@ -568,12 +587,12 @@ begin
             ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
             rd_first_word <= '1';
 
-            rd_ready      <= '1';
+            cfg_fifo_rden <= '1';
             reading_frame <= '0';
           end if;
         end if;
 
-        if cfg_rd_cnt.remainder /= 0 and rd_row_cnt + 1 > cfg_rd_cnt.last_row then
+        if cfg_rd_remainder /= 0 and rd_row_cnt + 1 > cfg_rd_last_row then
           rd_column_cnt <= (others => '0');
           rd_row_cnt    <= (others => '0');
           rd_ram_ptr    <= rd_ram_ptr + 1;
@@ -581,7 +600,7 @@ begin
           ram_rd_addr   <= (rd_ram_ptr + 1) & (numbits(MAX_ROWS) - 1 downto 0 => '0');
           rd_first_word <= '1';
 
-          rd_ready      <= '1';
+          cfg_fifo_rden <= '1';
           reading_frame <= '0';
         end if;
 
@@ -732,7 +751,6 @@ begin
         end if;
       end if;
     end process;
-
 
   end block;
 
