@@ -119,18 +119,18 @@ architecture dvbs2_tx_tb of dvbs2_tx_tb is
 
   -- AXI input
   signal axi_master         : axi_stream_data_bus_t(tdata(DATA_WIDTH - 1 downto 0));
-  signal m_data_valid       : boolean;
+  signal m_data_valid       : std_logic;
 
   -- AXI LDPC table input
   signal axi_ldpc           : axi_stream_data_bus_t(tdata(2*numbits(max(DVB_N_LDPC)) + 8 - 1 downto 0));
 
   -- AXI output
-  signal s_data_valid       : boolean;
+  signal s_data_valid       : std_logic;
 
-  signal axi_bb_scrambler    : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
-  signal axi_bch_encoder     : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
-  signal axi_ldpc_encoder    : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
-  signal axi_slave           : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
+  signal axi_bb_scrambler   : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
+  signal axi_bch_encoder    : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
+  signal axi_ldpc_encoder   : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
+  signal axi_slave          : axi_checker_t(axi(tdata(DATA_WIDTH - 1 downto 0)));
 
 begin
 
