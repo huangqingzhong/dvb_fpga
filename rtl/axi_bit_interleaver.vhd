@@ -178,8 +178,9 @@ begin
   -------------------
   -- Port mappings --
   -------------------
-  s_Axi_delay_block : block
-    signal tdata : std_logic_vector(DATA_WIDTH downto 0);
+  s_axi_delay_block : block
+    signal tdata_in  : std_logic_vector(DATA_WIDTH downto 0);
+    signal tdata_out : std_logic_vector(DATA_WIDTH downto 0);
   begin
     -- Delay the incoming AXI data so we can register the config
     s_axi_delay_u : entity fpga_cores.axi_stream_delay
@@ -188,21 +189,23 @@ begin
             TDATA_WIDTH  => DATA_WIDTH + 1)
         port map (
             -- Usual ports
-            clk     => clk,
-            rst     => rst,
+            clk      => clk,
+            rst      => rst,
 
             -- AXI slave input
             s_tvalid => s_tvalid,
             s_tready => s_tready_i,
-            s_tdata  => s_tlast & s_tdata,
+            s_tdata  => tdata_in,
 
             -- AXI master output
             m_tvalid => axi_tvalid,
             m_tready => axi_tready,
-            m_tdata  => tdata);
+            m_tdata  => tdata_out);
 
-      axi_tdata <= tdata(DATA_WIDTH - 1 downto 0);
-      axi_tlast <= tdata(DATA_WIDTH);
+      tdata_in <= s_tlast & s_tdata;
+
+      axi_tdata <= tdata_out(DATA_WIDTH - 1 downto 0);
+      axi_tlast <= tdata_out(DATA_WIDTH);
   end block;
 
   -- Generate 1 RAM for each column, each one gets written sequentially
