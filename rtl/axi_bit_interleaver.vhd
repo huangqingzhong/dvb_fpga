@@ -120,8 +120,6 @@ architecture axi_bit_interleaver of axi_bit_interleaver is
   -- signal wr_column_cnt_reg1        : unsigned(numbits(MAX_COLUMNS) - 1 downto 0);
   signal wr_remainder              : unsigned(numbits(DATA_WIDTH) - 1 downto 0);
 
-  signal wr_data_mux               : data_array_t(2*DATA_WIDTH - 1 downto 0);
-
   signal wr_addr_init              : std_logic := '0';
 
   signal ram_wr                    : ram_wr_array_t;
@@ -371,9 +369,11 @@ begin
   -- Handle write side pointers --
   --------------------------------
   write_side_p : process(clk, rst)
-    variable bit_cnt_v       : unsigned(bit_cnt'range) := (others => '0');
     variable wr_column_cnt_i : natural range 0 to MAX_COLUMNS - 1;
     variable tdata_sr        : std_logic_vector(tdata_sr_reg'range);
+    -- Bit counter has to be unsigned instead of integer w range because of an issue with
+    -- GHDL synth
+    variable bit_cnt_v       : unsigned(bit_cnt'range) := (others => '0');
   begin
     if rst = '1' then
       wr_column_cnt    <= (others => '0');
@@ -381,19 +381,21 @@ begin
       wr_remainder     <= (others => '0');
       wr_ram_ptr       <= (others => '0');
 
-      bit_cnt          <= (others => '0');
-
       wr_handler_ready <= '1';
       wr_addr_init     <= '1';
 
+      -- Assign registers to avoid AND'ing their values reset
       for i in ram_wr'range loop
         ram_wr(i) <= (addr => (others => 'U'),
                       data => (others => 'U'),
                       en => '0');
       end loop;
 
+      bit_cnt      <= (others => 'U');
       tdata_sr_reg <= (others => 'U');
       tdata_sr     := (others => 'U');
+
+      s_tlast_reg  <= 'U';
 
     elsif rising_edge(clk) then
 
@@ -423,7 +425,26 @@ begin
 
         s_tlast_reg                  <= '0';
         ram_wr(wr_column_cnt_i).en   <= '1';
-        ram_wr(wr_column_cnt_i).data <= tdata_sr(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0) & (DATA_WIDTH - minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0 => '0');
+
+        -- FIXME: Attempts to make this idependent of DATA_WIDTH all failed with
+        -- non-synthesizable constructs, but would be a nice to have
+        case to_integer(bit_cnt_v) is
+          when      0 => ram_wr(wr_column_cnt_i).data <= (DATA_WIDTH - 0 - 1 downto  0 => '0');
+          when      1 => ram_wr(wr_column_cnt_i).data <= tdata_sr(1 - 1 downto 0) & (DATA_WIDTH - 1 - 1 downto  0 => '0');
+          when      2 => ram_wr(wr_column_cnt_i).data <= tdata_sr(2 - 1 downto 0) & (DATA_WIDTH - 2 - 1 downto  0 => '0');
+          when      3 => ram_wr(wr_column_cnt_i).data <= tdata_sr(3 - 1 downto 0) & (DATA_WIDTH - 3 - 1 downto  0 => '0');
+          when      4 => ram_wr(wr_column_cnt_i).data <= tdata_sr(4 - 1 downto 0) & (DATA_WIDTH - 4 - 1 downto  0 => '0');
+          when      5 => ram_wr(wr_column_cnt_i).data <= tdata_sr(5 - 1 downto 0) & (DATA_WIDTH - 5 - 1 downto  0 => '0');
+          when      6 => ram_wr(wr_column_cnt_i).data <= tdata_sr(6 - 1 downto 0) & (DATA_WIDTH - 6 - 1 downto  0 => '0');
+          when      7 => ram_wr(wr_column_cnt_i).data <= tdata_sr(7 - 1 downto 0) & (DATA_WIDTH - 7 - 1 downto  0 => '0');
+          when others => ram_wr(wr_column_cnt_i).data <= tdata_sr(DATA_WIDTH - 1 downto 0);
+        end case;
+
+        -- This is the most conise way to express the above
+        ram_wr(wr_column_cnt_i).data
+          <= tdata_sr(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0)
+             & (DATA_WIDTH - minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0 => '0');
+
         tdata_sr                     := (others => 'U');
         bit_cnt_v                    := (others => '0');
         wr_column_cnt                <= (others => '0');
@@ -449,7 +470,7 @@ begin
           wr_row_cnt   <= (others => '0');
           wr_remainder <= wr_remainder + cfg_wr_remainder;
 
-          bit_cnt_v := bit_cnt_v - cfg_wr_remainder;
+          bit_cnt_v := bit_cnt_v - to_integer(cfg_wr_remainder);
 
           -- Chain counters
           if wr_column_cnt = cfg_wr_last_column then
@@ -656,13 +677,6 @@ begin
           end if;
         end if;
       end if;
-    end process;
-
-    process(tdata_sr_reg)
-    begin
-        for i in 0 to wr_data_mux'length - 1 loop
-          wr_data_mux(i) <= tdata_sr_reg(DATA_WIDTH + i - 1 downto i);
-        end loop;
     end process;
 
   end block;
