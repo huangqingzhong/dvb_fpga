@@ -429,7 +429,7 @@ begin
         s_tlast_reg                  <= '0';
         ram_wr(wr_column_cnt_i).en   <= '1';
 
-        -- FIXME: Attempts to make this idependent of DATA_WIDTH all failed with
+        -- FIXME: Attempts to make this independent of DATA_WIDTH all failed with
         -- non-synthesizable constructs, but would be a nice to have
         case to_integer(bit_cnt_v) is
           when      0 => ram_wr(wr_column_cnt_i).data <= (DATA_WIDTH - 0 - 1 downto  0 => '0');
@@ -443,10 +443,10 @@ begin
           when others => ram_wr(wr_column_cnt_i).data <= tdata_sr(DATA_WIDTH - 1 downto 0);
         end case;
 
-        -- This is the most conise way to express the above
-        ram_wr(wr_column_cnt_i).data
-          <= tdata_sr(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0)
-             & (DATA_WIDTH - minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0 => '0');
+        -- This is the most concise way to express the above
+        -- ram_wr(wr_column_cnt_i).data
+        --   <= tdata_sr(minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0)
+        --      & (DATA_WIDTH - minimum(to_integer(bit_cnt_v), DATA_WIDTH) - 1 downto 0 => '0');
 
         tdata_sr                     := (others => 'U');
         bit_cnt_v                    := (others => '0');
