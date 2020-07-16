@@ -394,6 +394,7 @@ begin
     check_equal(error_cnt, 0, sformat("Expected 0 errors but got %d", fo(error_cnt)));
   end process;
 
+  -- ghdl translate_off
   whitebox_monitor : if DBG_CHECK_FRAME_RAM_WRITES generate
 
     constant logger : logger_t := get_logger("whitebox_monitor");
@@ -670,5 +671,6 @@ begin
     end process;
 
   end generate whitebox_monitor;
+  -- ghdl translate_on
 
 end axi_bit_interleaver_tb;
