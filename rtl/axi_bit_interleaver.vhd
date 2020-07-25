@@ -210,11 +210,12 @@ begin
 
   -- Generate 1 RAM for each column, each one gets written sequentially
   generate_rams : for column in 0 to MAX_COLUMNS - 1 generate
-    -- Needed got GHDL simulation to work
+    -- Needed for GHDL simulation to work
     signal addr_a : std_logic_vector(numbits(MAX_ROWS) downto 0);
     signal addr_b : std_logic_vector(numbits(MAX_ROWS) downto 0);
   begin
 
+    -- The upper bits select the column, slice off the LSB for the RAM's address
     addr_a <= std_logic_vector(ram_wr(column).addr(numbits(MAX_ROWS) downto 0));
     addr_b <= std_logic_vector(ram_rd_addr(numbits(MAX_ROWS) downto 0));
 
@@ -223,6 +224,8 @@ begin
         ADDR_WIDTH   => numbits(MAX_ROWS) + 1,
         DATA_WIDTH   => DATA_WIDTH,
         RAM_TYPE     => "auto",
+        -- TODO: Adjust the pipeline to handle OUTPUT_DELAY = 2 to get better timing on
+        -- Xilinx devices (see message Synth 8-7053)
         OUTPUT_DELAY => 1)
       port map (
         -- Port A
@@ -232,7 +235,6 @@ begin
         addr_a    => addr_a,
         wrdata_a  => ram_wr(column).data,
         rddata_a  => open,
-
         -- Port B
         clk_b     => clk,
         clken_b   => '1',
@@ -673,6 +675,7 @@ begin
               columns := 5;
             end if;
 
+            -- These divisions should be determined at compile time so it should be fine
             cfg_wr_last_row    <= to_unsigned(rows / DATA_WIDTH, numbits(MAX_ROWS)) - 0;
             cfg_wr_last_column <= to_unsigned(columns, numbits(MAX_COLUMNS)) - 1;
             cfg_wr_remainder   <= to_unsigned(rows mod DATA_WIDTH, numbits(DATA_WIDTH));
