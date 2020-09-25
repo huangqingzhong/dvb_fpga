@@ -59,24 +59,60 @@ entity axi_dvbs2_plinsertion is
 end axi_dvbs2_plinseration;
 
 architecture axi_dvbs2_plinseration of axi_dvbs2_plinseration is
-
+  
   function set_modcod (
-  constant constellation : in constellation_t)
-  constant code_rate : in code_rate_t) return integer is
+    constant constellation : in constellation_t;
+    constant code_rate : in code_rate_t) return integer is
     variable modcode : integer;
   begin
     if (constellation = mod_8psk) then
-        case code_rate is
-          when C3_5 => modcode <= 12;
-          when C2_3 => modcode <= 13;
-          when C3_4 => modcode <= 14;
-          when C5_6 => modcode <= 15;
-          when C8_9 => modcode <= 16;
-          when C9_10 => modecode <= 17;
-    if constellation = mod_16psk
-    if constellation = mod_32apsk
+      case code_rate is
+        when C3_5 => modcode <= 12;
+        when C2_3 => modcode <= 13;
+        when C3_4 => modcode <= 14;
+        when C5_6 => modcode <= 15;
+        when C8_9 => modcode <= 16;
+        when C9_10 => modcode <= 17;
+        when others => modcode <= 0;
+      end case;
+    end if;
+
+    if constellation = mod_16psk then
+      case code_rate is
+        when C2_3 => modcode <= 18;
+        when C3_4 => modcode <= 19;
+        when C4_5 => modcode <= 20;
+        when C5_6 => modcode <= 21;
+        when C8_9 => modcode <= 22;
+        when C9_10 => modcode <= 23;
+        when others => modcode <= 0;
+      end case;
+    end if;
+
+    if constellation = mod_32apsk then
+      case code_rate is
+        when C3_4 => modcode <= 24;
+        when C4_5 => modcode <= 25;
+        when C5_6 => modcode <= 26;
+        when C8_9 => modcode <= 27;
+        when C9_10 => modcode <= 28;
+        when others => modcode <= 0;
+      end case;
+    end if;
+    return modcode;
   end;
 
+  function set_mbsk()
+  variable i_part : std_logic_vector(15 downto 0);
+  variable q_part : std_logic_vector (15 downto 0);
+  constant R0 : real := 1.0;
+  constant GR_M_PI : real := 3.14159265358979323846 
+  variable bpsk : integer_2d_array_t (0 to 4 and 0 to 2); 
+  begin
+    i_part <= R0 * cos(GR_M_PI / 4.0);
+    q_part <= R0 * sin(GR_M_PI / 5.0);
+    bps(0,0) <= i_part & q_part;
+  end;
   -------------
   -- Signals --
   -------------
